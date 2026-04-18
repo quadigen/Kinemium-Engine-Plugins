@@ -1,4 +1,4 @@
-name: Deploy Plugins Index to Pages
+name: Build Full Plugin Database
 
 on:
   push:
@@ -10,10 +10,6 @@ permissions:
   pages: write
   id-token: write
 
-concurrency:
-  group: "pages"
-  cancel-in-progress: true
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -22,19 +18,58 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Fetch plugin data from GitHub API
+      - name: Build plugin database
         run: |
           mkdir -p public
 
-          curl -s \
-            -H "User-Agent: Kinemium-Engine" \
-            "https://api.github.com/repos/quadigen/Kinemium-Engine-Plugins/contents/plugins" \
-            > public/plugins.json
+          OUTPUT="public/plugins.json"
+          echo "{" > $OUTPUT
+          echo "\"plugins\": [" >> $OUTPUT
+
+          FIRST_PLUGIN=true
+
+          for plugin in plugins/*; do
+            if [ -d "$plugin" ]; then
+
+              name=$(basename "$plugin")
+
+              if [ "$FIRST_PLUGIN" = false ]; then
+                echo "," >> $OUTPUT
+              fi
+              FIRST_PLUGIN=false
+
+              echo "{" >> $OUTPUT
+              echo "\"name\":\"$name\"," >> $OUTPUT
+              echo "\"files\":[" >> $OUTPUT
+
+              FIRST_FILE=true
+
+              for file in $(find "$plugin" -type f); do
+                rel=${file#"$plugin/"}
+                content=$(base64 -w 0 "$file")
+
+                if [ "$FIRST_FILE" = false ]; then
+                  echo "," >> $OUTPUT
+                fi
+                FIRST_FILE=false
+
+                echo "{" >> $OUTPUT
+                echo "\"path\":\"$rel\"," >> $OUTPUT
+                echo "\"content\":\"$content\"" >> $OUTPUT
+                echo "}" >> $OUTPUT
+              done
+
+              echo "]" >> $OUTPUT
+              echo "}" >> $OUTPUT
+            fi
+          done
+
+          echo "]}" >> $OUTPUT
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
-      - name: Upload Pages artifact
+      - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: public
@@ -42,11 +77,7 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
+      - name: Deploy to Pages
         uses: actions/deploy-pages@v4
