@@ -22,29 +22,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Generate plugins.json
+      - name: Fetch plugin data from GitHub API
         run: |
           mkdir -p public
 
-          echo "{" > public/plugins.json
-          echo "\"plugins\": [" >> public/plugins.json
-
-          first=true
-          for d in plugins/*; do
-            if [ -d "$d" ]; then
-              name=$(basename "$d")
-
-              if [ "$first" = true ]; then
-                first=false
-              else
-                echo "," >> public/plugins.json
-              fi
-
-              echo "{\"name\":\"$name\"}" >> public/plugins.json
-            fi
-          done
-
-          echo "]}" >> public/plugins.json
+          curl -s \
+            -H "User-Agent: Kinemium-Engine" \
+            "https://api.github.com/repos/quadigen/Kinemium-Engine-Plugins/contents/plugins" \
+            > public/plugins.json
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
