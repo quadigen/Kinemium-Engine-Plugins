@@ -1,0 +1,67 @@
+name: Deploy Plugins Index to Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate plugins.json
+        run: |
+          mkdir -p public
+
+          echo "{" > public/plugins.json
+          echo "\"plugins\": [" >> public/plugins.json
+
+          first=true
+          for d in plugins/*; do
+            if [ -d "$d" ]; then
+              name=$(basename "$d")
+
+              if [ "$first" = true ]; then
+                first=false
+              else
+                echo "," >> public/plugins.json
+              fi
+
+              echo "{\"name\":\"$name\"}" >> public/plugins.json
+            fi
+          done
+
+          echo "]}" >> public/plugins.json
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
