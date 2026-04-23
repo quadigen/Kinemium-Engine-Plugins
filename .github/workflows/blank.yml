@@ -32,52 +32,49 @@ jobs:
       - name: Build plugin database
         run: |
           set -e
-      
-          mkdir -p public/plugins
-          mkdir -p public/files
+          mkdir -p public/plugins public/files
       
           INDEX="public/plugins.json"
-          echo '{"plugins":[' > "$INDEX"
-      
+          echo '{"version":1,"plugins":[' > "$INDEX"
           FIRST_PLUGIN=true
       
           for plugin in plugins/*; do
             [ -d "$plugin" ] || continue
             name=$(basename "$plugin")
+            manifest="$plugin/manifest.json"
+            [ -f "$manifest" ] || continue
       
-            plugin_json="public/plugins/$name.json"
-            echo '{"name":"'"$name"'","files":[' > "$plugin_json"
-      
+            # Compress and stage all files
+            plugin_files_json="[]"
+            file_entries=""
             FIRST_FILE=true
       
-            # iterate files safely
             while IFS= read -r -d '' file; do
               rel="${file#"$plugin/"}"
               out="public/files/$name/$rel.zst"
-      
               mkdir -p "$(dirname "$out")"
-      
-              # compress (fast + good ratio)
               zstd -q -10 -T0 --no-progress "$file" -o "$out"
       
+              entry='{"path":"'"$rel"'","url":"/files/'"$name"'/'"$rel"'.zst"}'
               if [ "$FIRST_FILE" = false ]; then
-                echo ',' >> "$plugin_json"
+                file_entries="$file_entries,$entry"
+              else
+                file_entries="$entry"
               fi
               FIRST_FILE=false
-      
-              echo -n '{"path":"'"$rel"'","url":"/files/'"$name"'/'"$rel"'.zst"}' >> "$plugin_json"
-      
             done < <(find "$plugin" -type f -print0)
       
-            echo ']}' >> "$plugin_json"
+            # Inline manifest into the index — client never needs to fetch files to browse
+            manifest_inline=$(cat "$manifest")
       
-            if [ "$FIRST_PLUGIN" = false ]; then
-              echo ',' >> "$INDEX"
-            fi
+            if [ "$FIRST_PLUGIN" = false ]; then echo ',' >> "$INDEX"; fi
             FIRST_PLUGIN=false
       
-            echo -n '{"name":"'"$name"'","url":"/plugins/'"$name"'.json"}' >> "$INDEX"
+            # Write slim per-plugin record (files only, manifest already in index)
+            echo '{"manifest":'"$manifest_inline"',"files":['"$file_entries"']}' \
+              > "public/plugins/$name.json"
       
+            echo -n '{"manifest":'"$manifest_inline"',"url":"/plugins/'"$name"'.json"}' >> "$INDEX"
           done
       
           echo ']}' >> "$INDEX"
