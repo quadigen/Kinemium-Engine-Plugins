@@ -26,53 +26,61 @@ jobs:
       - name: Update submodules to latest
         run: git submodule update --remote --merge
 
+      - name: Install zstd
+        run: sudo apt-get update && sudo apt-get install -y zstd
+
       - name: Build plugin database
         run: |
-          mkdir -p public
-
-          OUTPUT="public/plugins.json"
-          echo "{" > $OUTPUT
-          echo "\"plugins\": [" >> $OUTPUT
-
+          set -e
+      
+          mkdir -p public/plugins
+          mkdir -p public/files
+      
+          INDEX="public/plugins.json"
+          echo '{"plugins":[' > "$INDEX"
+      
           FIRST_PLUGIN=true
-
+      
           for plugin in plugins/*; do
-            if [ -d "$plugin" ]; then
-
-              name=$(basename "$plugin")
-
-              if [ "$FIRST_PLUGIN" = false ]; then
-                echo "," >> $OUTPUT
+            [ -d "$plugin" ] || continue
+            name=$(basename "$plugin")
+      
+            plugin_json="public/plugins/$name.json"
+            echo '{"name":"'"$name"'","files":[' > "$plugin_json"
+      
+            FIRST_FILE=true
+      
+            # iterate files safely
+            while IFS= read -r -d '' file; do
+              rel="${file#"$plugin/"}"
+              out="public/files/$name/$rel.zst"
+      
+              mkdir -p "$(dirname "$out")"
+      
+              # compress (fast + good ratio)
+              zstd -q -10 -T0 --no-progress "$file" -o "$out"
+      
+              if [ "$FIRST_FILE" = false ]; then
+                echo ',' >> "$plugin_json"
               fi
-              FIRST_PLUGIN=false
-
-              echo "{" >> $OUTPUT
-              echo "\"name\":\"$name\"," >> $OUTPUT
-              echo "\"files\":[" >> $OUTPUT
-
-              FIRST_FILE=true
-
-              for file in $(find "$plugin" -type f); do
-                rel=${file#"$plugin/"}
-                content=$(base64 -w 0 "$file")
-
-                if [ "$FIRST_FILE" = false ]; then
-                  echo "," >> $OUTPUT
-                fi
-                FIRST_FILE=false
-
-                echo "{" >> $OUTPUT
-                echo "\"path\":\"$rel\"," >> $OUTPUT
-                echo "\"content\":\"$content\"" >> $OUTPUT
-                echo "}" >> $OUTPUT
-              done
-
-              echo "]" >> $OUTPUT
-              echo "}" >> $OUTPUT
+              FIRST_FILE=false
+      
+              echo -n '{"path":"'"$rel"'","url":"/files/'"$name"'/'"$rel"'.zst"}' >> "$plugin_json"
+      
+            done < <(find "$plugin" -type f -print0)
+      
+            echo ']}' >> "$plugin_json"
+      
+            if [ "$FIRST_PLUGIN" = false ]; then
+              echo ',' >> "$INDEX"
             fi
+            FIRST_PLUGIN=false
+      
+            echo -n '{"name":"'"$name"'","url":"/plugins/'"$name"'.json"}' >> "$INDEX"
+      
           done
-
-          echo "]}" >> $OUTPUT
+      
+          echo ']}' >> "$INDEX"
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
