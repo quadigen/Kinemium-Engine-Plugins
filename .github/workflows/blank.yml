@@ -37,23 +37,19 @@ jobs:
           set -euo pipefail
 
           mkdir -p public/plugins public/files
+          entries_dir=$(mktemp -d)
 
-          get_data_uri() {
-            local src="$1"
-            [[ -f "$src" ]] || { echo ""; return; }
-            local ext="${src##*.}"
-            local mime
-            case "${ext,,}" in
-              png)      mime="image/png" ;;
-              jpg|jpeg) mime="image/jpeg" ;;
-              webp)     mime="image/webp" ;;
-              gif)      mime="image/gif" ;;
-              *)        mime="application/octet-stream" ;;
+          get_mime() {
+            case "${1##*.}" in
+              png)      echo "image/png" ;;
+              jpg|jpeg) echo "image/jpeg" ;;
+              webp)     echo "image/webp" ;;
+              gif)      echo "image/gif" ;;
+              *)        echo "application/octet-stream" ;;
             esac
-            echo "data:$mime;base64,$(base64 -w 0 "$src")"
           }
 
-          plugin_index_entries=()
+          plugin_count=0
 
           for plugin_dir in plugins/*/; do
             [[ -d "$plugin_dir" ]] || continue
@@ -73,31 +69,45 @@ jobs:
             icon=$(jq -r '.icon // empty' <<< "$manifest_json")
             thumbnail=$(jq -r '.thumbnail // empty' <<< "$manifest_json")
 
-            # Write data URIs to temp files to avoid ARG_MAX
+            # Write data URIs to temp files — never pass base64 as shell args
             icon_tmp=$(mktemp)
             thumbnail_tmp=$(mktemp)
-            get_data_uri "$plugin_dir/$icon" > "$icon_tmp"
-            get_data_uri "$plugin_dir/$thumbnail" > "$thumbnail_tmp"
 
-            file_entries=()
+            if [[ -n "$icon" && -f "$plugin_dir/$icon" ]]; then
+              printf "data:%s;base64,%s" "$(get_mime "$icon")" "$(base64 -w 0 "$plugin_dir/$icon")" > "$icon_tmp"
+            fi
+
+            if [[ -n "$thumbnail" && -f "$plugin_dir/$thumbnail" ]]; then
+              printf "data:%s;base64,%s" "$(get_mime "$thumbnail")" "$(base64 -w 0 "$plugin_dir/$thumbnail")" > "$thumbnail_tmp"
+            fi
+
+            # Build files array — write each entry to its own temp file then slurp
+            files_dir=$(mktemp -d)
+            file_count=0
+
             while IFS= read -r -d '' file; do
               rel="${file#"$plugin_dir"}"
               [[ "$rel" == "manifest.json" ]] && continue
-              [[ "$rel" == "$icon" || "$rel" == "$thumbnail" ]] && continue
+              [[ -n "$icon" && "$rel" == "$icon" ]] && continue
+              [[ -n "$thumbnail" && "$rel" == "$thumbnail" ]] && continue
 
               out="public/files/$name/$rel.zst"
               mkdir -p "$(dirname "$out")"
               zstd -q -10 -T0 --no-progress "$file" -o "$out"
 
-              file_entries+=("$(jq -nc \
+              jq -nc \
                 --arg path "$rel" \
                 --arg url "/files/$name/$rel.zst" \
-                '{path: $path, url: $url}')")
+                '{path: $path, url: $url}' \
+                > "$files_dir/$((++file_count)).json"
+
             done < <(find "$plugin_dir" -type f -print0)
 
-            files_array=$(IFS=,; echo "[${file_entries[*]}]")
+            # Slurp file entries into an array
+            files_array=$(jq -sc '.' "$files_dir"/*.json 2>/dev/null || echo '[]')
+            rm -rf "$files_dir"
 
-            # Use --rawfile to read data URIs from files, bypassing ARG_MAX
+            # Write individual plugin JSON
             jq -n \
               --argjson manifest "$manifest_json" \
               --rawfile icon "$icon_tmp" \
@@ -106,22 +116,25 @@ jobs:
               '{manifest: $manifest, icon: $icon, thumbnail: $thumbnail, files: $files}' \
               > "public/plugins/$name.json"
 
-            plugin_index_entries+=("$(jq -n \
+            # Write index entry to its own file — never accumulate in a shell array
+            jq -n \
               --argjson manifest "$manifest_json" \
               --rawfile icon "$icon_tmp" \
               --rawfile thumbnail "$thumbnail_tmp" \
               --arg url "/plugins/$name.json" \
-              '{manifest: $manifest, icon: $icon, thumbnail: $thumbnail, url: $url}')")
+              '{manifest: $manifest, icon: $icon, thumbnail: $thumbnail, url: $url}' \
+              > "$entries_dir/$name.json"
 
             rm -f "$icon_tmp" "$thumbnail_tmp"
             echo "✓ $name"
+            ((++plugin_count))
           done
 
-          index_array=$(IFS=,; echo "[${plugin_index_entries[*]}]")
-          jq -n --argjson plugins "$index_array" '{version: 1, plugins: $plugins}' \
-            > public/plugins.json
+          # Slurp all index entries into final plugins.json
+          jq -sc '{version: 1, plugins: .}' "$entries_dir"/*.json > public/plugins.json
+          rm -rf "$entries_dir"
 
-          echo "Built ${#plugin_index_entries[@]} plugin(s)"
+          echo "Built $plugin_count plugin(s)"
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
