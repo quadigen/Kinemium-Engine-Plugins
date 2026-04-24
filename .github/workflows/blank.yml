@@ -38,18 +38,17 @@ jobs:
 
           mkdir -p public/plugins public/files
 
-          # Returns a data URI for an image file, or empty string
           get_data_uri() {
             local src="$1"
-            [[ -f "$src" ]] || return 0
+            [[ -f "$src" ]] || { echo ""; return; }
             local ext="${src##*.}"
             local mime
             case "${ext,,}" in
-              png)       mime="image/png" ;;
-              jpg|jpeg)  mime="image/jpeg" ;;
-              webp)      mime="image/webp" ;;
-              gif)       mime="image/gif" ;;
-              *)         mime="application/octet-stream" ;;
+              png)      mime="image/png" ;;
+              jpg|jpeg) mime="image/jpeg" ;;
+              webp)     mime="image/webp" ;;
+              gif)      mime="image/gif" ;;
+              *)        mime="application/octet-stream" ;;
             esac
             echo "data:$mime;base64,$(base64 -w 0 "$src")"
           }
@@ -74,10 +73,12 @@ jobs:
             icon=$(jq -r '.icon // empty' <<< "$manifest_json")
             thumbnail=$(jq -r '.thumbnail // empty' <<< "$manifest_json")
 
-            icon_data=$(get_data_uri "$plugin_dir/$icon")
-            thumbnail_data=$(get_data_uri "$plugin_dir/$thumbnail")
+            # Write data URIs to temp files to avoid ARG_MAX
+            icon_tmp=$(mktemp)
+            thumbnail_tmp=$(mktemp)
+            get_data_uri "$plugin_dir/$icon" > "$icon_tmp"
+            get_data_uri "$plugin_dir/$thumbnail" > "$thumbnail_tmp"
 
-            # Compress all non-manifest, non-media files and build the files array
             file_entries=()
             while IFS= read -r -d '' file; do
               rel="${file#"$plugin_dir"}"
@@ -96,27 +97,26 @@ jobs:
 
             files_array=$(IFS=,; echo "[${file_entries[*]}]")
 
-            # Write individual plugin JSON
+            # Use --rawfile to read data URIs from files, bypassing ARG_MAX
             jq -n \
               --argjson manifest "$manifest_json" \
-              --arg icon "$icon_data" \
-              --arg thumbnail "$thumbnail_data" \
+              --rawfile icon "$icon_tmp" \
+              --rawfile thumbnail "$thumbnail_tmp" \
               --argjson files "$files_array" \
               '{manifest: $manifest, icon: $icon, thumbnail: $thumbnail, files: $files}' \
               > "public/plugins/$name.json"
 
-            # Collect index entry (no files array, has url instead)
             plugin_index_entries+=("$(jq -n \
               --argjson manifest "$manifest_json" \
-              --arg icon "$icon_data" \
-              --arg thumbnail "$thumbnail_data" \
+              --rawfile icon "$icon_tmp" \
+              --rawfile thumbnail "$thumbnail_tmp" \
               --arg url "/plugins/$name.json" \
               '{manifest: $manifest, icon: $icon, thumbnail: $thumbnail, url: $url}')")
 
+            rm -f "$icon_tmp" "$thumbnail_tmp"
             echo "✓ $name"
           done
 
-          # Write final index
           index_array=$(IFS=,; echo "[${plugin_index_entries[*]}]")
           jq -n --argjson plugins "$index_array" '{version: 1, plugins: $plugins}' \
             > public/plugins.json
