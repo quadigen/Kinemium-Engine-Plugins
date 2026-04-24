@@ -7,6 +7,10 @@ on:
   schedule:
     - cron: '0 */6 * * *'
 
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
 permissions:
   contents: read
   pages: write
@@ -15,7 +19,6 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,96 +29,99 @@ jobs:
       - name: Update submodules to latest
         run: git submodule update --remote --merge
 
-      - name: Install zstd
-        run: sudo apt-get update && sudo apt-get install -y zstd
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y jq zstd
 
       - name: Build plugin database
         run: |
-          set -e
-          sudo apt-get update && sudo apt-get install -y jq zstd
-      
+          set -euo pipefail
+
           mkdir -p public/plugins public/files
-      
-          INDEX="public/plugins.json"
-          echo '{"version":1,"plugins":[' > "$INDEX"
-          FIRST_PLUGIN=true
-      
-          compress_asset () {
+
+          # Returns a data URI for an image file, or empty string
+          get_data_uri() {
             local src="$1"
-            local out="$2"
-      
-            if [ -f "$src" ]; then
-              mkdir -p "$(dirname "$out")"
-              zstd -q -10 -T0 --no-progress "$src" -o "$out"
-              echo "$out.zst"
-            else
-              echo ""
-            fi
+            [[ -f "$src" ]] || return 0
+            local ext="${src##*.}"
+            local mime
+            case "${ext,,}" in
+              png)       mime="image/png" ;;
+              jpg|jpeg)  mime="image/jpeg" ;;
+              webp)      mime="image/webp" ;;
+              gif)       mime="image/gif" ;;
+              *)         mime="application/octet-stream" ;;
+            esac
+            echo "data:$mime;base64,$(base64 -w 0 "$src")"
           }
-      
-          for plugin in plugins/*; do
-            [ -d "$plugin" ] || continue
-            name=$(basename "$plugin")
-            manifest="$plugin/manifest.json"
-            [ -f "$manifest" ] || continue
-      
-            manifest_inline=$(cat "$manifest")
-      
-            icon=$(echo "$manifest_inline" | jq -r '.icon // empty')
-            thumbnail=$(echo "$manifest_inline" | jq -r '.thumbnail // empty')
-      
-            icon_url=""
-            thumbnail_url=""
-      
-            if [ -n "$icon" ]; then
-              icon_url=$(compress_asset "$plugin/$icon" "public/files/$name/$icon")
+
+          plugin_index_entries=()
+
+          for plugin_dir in plugins/*/; do
+            [[ -d "$plugin_dir" ]] || continue
+            name=$(basename "$plugin_dir")
+            manifest="$plugin_dir/manifest.json"
+
+            if [[ ! -f "$manifest" ]]; then
+              echo "⚠ Skipping $name: missing manifest.json"
+              continue
             fi
-      
-            if [ -n "$thumbnail" ]; then
-              thumbnail_url=$(compress_asset "$plugin/$thumbnail" "public/files/$name/$thumbnail")
+
+            if ! manifest_json=$(jq '.' "$manifest" 2>/dev/null); then
+              echo "⚠ Skipping $name: invalid manifest JSON"
+              continue
             fi
-      
-            file_entries=""
-            FIRST_FILE=true
-      
+
+            icon=$(jq -r '.icon // empty' <<< "$manifest_json")
+            thumbnail=$(jq -r '.thumbnail // empty' <<< "$manifest_json")
+
+            icon_data=$(get_data_uri "$plugin_dir/$icon")
+            thumbnail_data=$(get_data_uri "$plugin_dir/$thumbnail")
+
+            # Compress all non-manifest, non-media files and build the files array
+            file_entries=()
             while IFS= read -r -d '' file; do
-              rel="${file#"$plugin/"}"
-      
-              # skip manifest + media already handled
-              if [ "$rel" = "manifest.json" ]; then
-                continue
-              fi
-              if [ "$rel" = "$icon" ] || [ "$rel" = "$thumbnail" ]; then
-                continue
-              fi
-      
+              rel="${file#"$plugin_dir"}"
+              [[ "$rel" == "manifest.json" ]] && continue
+              [[ "$rel" == "$icon" || "$rel" == "$thumbnail" ]] && continue
+
               out="public/files/$name/$rel.zst"
               mkdir -p "$(dirname "$out")"
               zstd -q -10 -T0 --no-progress "$file" -o "$out"
-      
-              entry='{"path":"'"$rel"'","url":"/files/'"$name"'/'"$rel"'.zst"}'
-      
-              if [ "$FIRST_FILE" = false ]; then
-                file_entries="$file_entries,$entry"
-              else
-                file_entries="$entry"
-              fi
-              FIRST_FILE=false
-      
-            done < <(find "$plugin" -type f -print0)
-      
-            if [ "$FIRST_PLUGIN" = false ]; then
-              echo ',' >> "$INDEX"
-            fi
-            FIRST_PLUGIN=false
-      
-            echo '{"manifest":'"$manifest_inline"',"icon":"'"$icon_url"'","thumbnail":"'"$thumbnail_url"'","files":['"$file_entries"']}' \
+
+              file_entries+=("$(jq -nc \
+                --arg path "$rel" \
+                --arg url "/files/$name/$rel.zst" \
+                '{path: $path, url: $url}')")
+            done < <(find "$plugin_dir" -type f -print0)
+
+            files_array=$(IFS=,; echo "[${file_entries[*]}]")
+
+            # Write individual plugin JSON
+            jq -n \
+              --argjson manifest "$manifest_json" \
+              --arg icon "$icon_data" \
+              --arg thumbnail "$thumbnail_data" \
+              --argjson files "$files_array" \
+              '{manifest: $manifest, icon: $icon, thumbnail: $thumbnail, files: $files}' \
               > "public/plugins/$name.json"
-      
-            echo -n '{"manifest":'"$manifest_inline"',"icon":"'"$icon_url"'","thumbnail":"'"$thumbnail_url"'","url":"/plugins/'"$name"'.json"}' >> "$INDEX"
+
+            # Collect index entry (no files array, has url instead)
+            plugin_index_entries+=("$(jq -n \
+              --argjson manifest "$manifest_json" \
+              --arg icon "$icon_data" \
+              --arg thumbnail "$thumbnail_data" \
+              --arg url "/plugins/$name.json" \
+              '{manifest: $manifest, icon: $icon, thumbnail: $thumbnail, url: $url}')")
+
+            echo "✓ $name"
           done
-      
-          echo ']}' >> "$INDEX"
+
+          # Write final index
+          index_array=$(IFS=,; echo "[${plugin_index_entries[*]}]")
+          jq -n --argjson plugins "$index_array" '{version: 1, plugins: $plugins}' \
+            > public/plugins.json
+
+          echo "Built ${#plugin_index_entries[@]} plugin(s)"
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -128,7 +134,10 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
-
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Deploy to Pages
+        id: deployment
         uses: actions/deploy-pages@v4
