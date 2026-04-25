@@ -503,10 +503,9 @@ function createCard(plugin) {
   const badges = document.createElement("div");
   badges.className = "plugin-card__badges";
   badges.append(
-    createCardBadge("Server"),
-    createCardBadge("Fabric"),
-    createCardBadge("Forge"),
-    createCardBadge("NeoForge")
+    createCardBadge(plugin.category),
+    createCardBadge(plugin.license),
+    createCardBadge(plugin.supportLevel)
   );
 
   header.append(icon, title, badges);
