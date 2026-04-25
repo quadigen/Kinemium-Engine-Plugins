@@ -19,75 +19,115 @@
     <script defer src="app.js"></script>
   </head>
   <body>
-    <div class="page-shell">
+    <div class="app-shell">
       <header class="topbar">
-        <div class="brand">
-          <img class="brand__mark" src="favicon.svg" alt="">
-          <div class="brand__copy">
-            <strong>Kinemium</strong>
-            <span>Plugin Registry</span>
+        <div class="topbar__brand">
+          <img class="brand-mark" src="favicon.svg" alt="">
+          <div class="brand-lockup">
+            <strong>KINEMIUM</strong>
+            <span>Plugin Library</span>
           </div>
         </div>
 
+        <nav class="topbar__nav" aria-label="Primary">
+          <a class="nav-pill is-active" href="#">Assets</a>
+        </nav>
+
         <button id="theme-toggle" class="theme-toggle" type="button" aria-live="polite">
-          <span class="theme-toggle__track">
-            <span class="theme-toggle__thumb"></span>
-          </span>
-          <span class="theme-toggle__copy">
-            <span class="theme-toggle__eyebrow">Theme</span>
-            <strong id="theme-toggle-label">Dark</strong>
-          </span>
+          <span class="theme-toggle__label">Theme</span>
+          <strong id="theme-toggle-label">Dark</strong>
         </button>
       </header>
 
-      <header class="hero">
-        <p class="eyebrow">Workflow-Built Plugin Catalog</p>
-        <h1>Plugins</h1>
-        <p class="hero__lede">Install plugins to improve your experience in Kinemium Engine</p>
-
-        <div class="hero__stats">
-          <article class="stat-card">
-            <span class="stat-card__label">Plugins</span>
-            <strong id="plugin-count">0</strong>
-          </article>
-          <article class="stat-card">
-            <span class="stat-card__label">Visible</span>
-            <strong id="visible-count">0</strong>
-          </article>
-          <article class="stat-card">
-            <span class="stat-card__label">Updated</span>
-            <strong id="generated-at">Waiting for data</strong>
-          </article>
-        </div>
-      </header>
-
-      <main class="layout">
-        <section class="toolbar" aria-label="Plugin search">
-          <div class="search-shell">
-            <label class="search-shell__label" for="search-input">Search plugins</label>
-            <div class="search-shell__row">
+      <main class="library-layout">
+        <aside class="sidebar" aria-label="Plugin filters">
+          <div class="sidebar__search">
+            <div class="search-row">
               <input
                 id="search-input"
                 type="search"
                 autocomplete="off"
                 spellcheck="false"
-                placeholder="Search plugins by name, author, keyword, id, or description"
+                placeholder="Search for..."
               >
-              <button id="clear-search" class="clear-button" type="button" hidden>Clear</button>
+              <button id="search-submit" class="search-button" type="button">Search</button>
             </div>
           </div>
-          <div class="toolbar__summary">
-            <p id="results-status">Loading plugin registry...</p>
-            <p class="toolbar__hint">Select any plugin card to inspect its files, README, and download.</p>
-          </div>
-        </section>
 
-        <section class="grid-section">
+          <section class="filter-group">
+            <label class="filter-group__label" for="category-filter">Category</label>
+            <select id="category-filter">
+              <option value="any">Any</option>
+            </select>
+          </section>
+
+          <section class="filter-group">
+            <span class="filter-group__label">Support level</span>
+            <label class="check-row">
+              <input id="support-testing" type="checkbox">
+              <span>Testing</span>
+            </label>
+            <label class="check-row">
+              <input id="support-community" type="checkbox">
+              <span>Community</span>
+            </label>
+            <label class="check-row">
+              <input id="support-featured" type="checkbox">
+              <span>Featured</span>
+            </label>
+          </section>
+
+          <section class="filter-group">
+            <label class="filter-group__label" for="engine-filter">Kinemium version</label>
+            <select id="engine-filter">
+              <option value="any">Any</option>
+            </select>
+          </section>
+
+          <section class="filter-group">
+            <label class="filter-group__label" for="license-filter">License</label>
+            <select id="license-filter">
+              <option value="any">Any</option>
+            </select>
+          </section>
+
+          <section class="filter-group">
+            <label class="filter-group__label" for="sort-filter">Order by</label>
+            <select id="sort-filter">
+              <option value="updated">Updated</option>
+              <option value="name">Name</option>
+              <option value="author">Author</option>
+              <option value="version">Version</option>
+              <option value="size">Archive size</option>
+            </select>
+            <label class="check-row check-row--compact">
+              <input id="reverse-sort" type="checkbox">
+              <span>Reverse</span>
+            </label>
+          </section>
+        </aside>
+
+        <section class="catalog">
+          <header class="catalog__header">
+            <div class="catalog__summary">
+              <p class="catalog__eyebrow">Assets</p>
+              <p id="results-status" class="catalog__status">Loading plugin registry...</p>
+            </div>
+
+            <div class="catalog__meta">
+              <span class="catalog-stat"><strong id="plugin-count">0</strong> total</span>
+              <span class="catalog-stat"><strong id="visible-count">0</strong> visible</span>
+              <span class="catalog-updated">Updated <strong id="generated-at">Waiting for data</strong></span>
+            </div>
+          </header>
+
           <div id="plugin-grid" class="plugin-grid" aria-live="polite"></div>
+
           <div id="empty-state" class="empty-state" hidden>
             <h2>No plugins matched that search.</h2>
-            <p>Try a plugin name, keyword, author, or part of the manifest id.</p>
+            <p>Try a different plugin name, category, license, or support filter.</p>
           </div>
+
           <div id="error-state" class="empty-state" hidden>
             <h2>The registry could not be loaded.</h2>
             <p>Check that the workflow published <code>plugins.json</code> and the plugin detail files.</p>

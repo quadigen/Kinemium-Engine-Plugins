@@ -14,7 +14,15 @@ const elements = {
   visibleCount: document.querySelector("#visible-count"),
   generatedAt: document.querySelector("#generated-at"),
   searchInput: document.querySelector("#search-input"),
-  clearSearch: document.querySelector("#clear-search"),
+  searchSubmit: document.querySelector("#search-submit"),
+  categoryFilter: document.querySelector("#category-filter"),
+  supportTesting: document.querySelector("#support-testing"),
+  supportCommunity: document.querySelector("#support-community"),
+  supportFeatured: document.querySelector("#support-featured"),
+  engineFilter: document.querySelector("#engine-filter"),
+  licenseFilter: document.querySelector("#license-filter"),
+  sortFilter: document.querySelector("#sort-filter"),
+  reverseSort: document.querySelector("#reverse-sort"),
   resultsStatus: document.querySelector("#results-status"),
   pluginGrid: document.querySelector("#plugin-grid"),
   emptyState: document.querySelector("#empty-state"),
@@ -35,11 +43,26 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 function wireEvents() {
-  elements.searchInput.addEventListener("input", onSearchInput);
-  elements.clearSearch.addEventListener("click", clearSearch);
+  elements.searchInput.addEventListener("input", applySearch);
+  elements.searchSubmit.addEventListener("click", applySearch);
+  elements.categoryFilter.addEventListener("change", applySearch);
+  elements.supportTesting.addEventListener("change", applySearch);
+  elements.supportCommunity.addEventListener("change", applySearch);
+  elements.supportFeatured.addEventListener("change", applySearch);
+  elements.engineFilter.addEventListener("change", applySearch);
+  elements.licenseFilter.addEventListener("change", applySearch);
+  elements.sortFilter.addEventListener("change", applySearch);
+  elements.reverseSort.addEventListener("change", applySearch);
   elements.detailClose.addEventListener("click", closeDetails);
   elements.detailOverlay.addEventListener("click", closeDetails);
   elements.themeToggle.addEventListener("click", toggleTheme);
+
+  elements.searchInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      applySearch();
+    }
+  });
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && state.activeSlug) {
@@ -73,10 +96,6 @@ function applyTheme(theme) {
     "aria-label",
     `Switch to ${theme === "dark" ? "light" : "dark"} theme`
   );
-  elements.themeToggle.setAttribute(
-    "title",
-    `Switch to ${theme === "dark" ? "light" : "dark"} theme`
-  );
 }
 
 function toggleTheme() {
@@ -103,8 +122,10 @@ async function loadRegistry() {
     state.registry = registry;
     state.plugins = plugins.map(normalizePlugin);
 
+    populateFilters();
+
     elements.pluginCount.textContent = String(state.plugins.length);
-    elements.generatedAt.textContent = formatTimestamp(registry.generatedAt);
+    elements.generatedAt.textContent = formatTimestamp(registry.generatedAt, "dateTime");
 
     applySearch();
     handleHashChange();
@@ -119,12 +140,23 @@ async function loadRegistry() {
 function normalizePlugin(plugin) {
   const manifest = plugin.manifest || {};
   const keywords = Array.isArray(manifest.keywords) ? manifest.keywords : [];
+  const category = inferCategory(manifest, keywords);
+  const supportLevel = inferSupportLevel(manifest);
+  const isFeatured = Boolean(manifest.featured || manifest.support?.featured);
+  const engineVersion = manifest.engine?.minVersion || "Unspecified";
+  const license = manifest.license || "Unspecified";
+  const updatedTimestamp = Date.parse(plugin.updatedAt || "") || 0;
+
   const searchText = [
     manifest.name,
     manifest.id,
     manifest.description,
     manifest.author,
     manifest.version,
+    category,
+    supportLevel,
+    license,
+    engineVersion,
     keywords.join(" "),
   ]
     .filter(Boolean)
@@ -139,56 +171,196 @@ function normalizePlugin(plugin) {
     displayName: manifest.name || plugin.slug,
     iconUrl: plugin.assets?.iconUrl || null,
     thumbnailUrl: plugin.assets?.thumbnailUrl || null,
-    backgroundUrl: plugin.assets?.thumbnailUrl || plugin.assets?.iconUrl || null,
+    artworkUrl: plugin.assets?.thumbnailUrl || plugin.assets?.iconUrl || null,
+    category,
+    supportLevel,
+    isTesting: supportLevel === "Testing",
+    isCommunity: supportLevel === "Community",
+    isFeatured,
+    engineVersion,
+    license,
+    updatedTimestamp,
   };
 }
 
-function onSearchInput(event) {
-  const hasQuery = event.target.value.trim().length > 0;
-  elements.clearSearch.hidden = !hasQuery;
-  applySearch();
+function inferCategory(manifest, keywords) {
+  if (typeof manifest.category === "string" && manifest.category.trim()) {
+    return normalizeLabel(manifest.category);
+  }
+
+  const normalizedKeywords = keywords.map((keyword) => String(keyword).toLowerCase());
+
+  if (normalizedKeywords.some((keyword) => keyword.includes("shader"))) {
+    return "Shaders";
+  }
+  if (normalizedKeywords.some((keyword) => keyword.includes("theme"))) {
+    return "Themes";
+  }
+  if (normalizedKeywords.some((keyword) => keyword.includes("icon"))) {
+    return "Icons";
+  }
+  if (normalizedKeywords.some((keyword) => keyword.includes("debug"))) {
+    return "Debug";
+  }
+  if (manifest.main && String(manifest.main).toLowerCase().endsWith(".luau")) {
+    return "Scripts";
+  }
+
+  return "Tools";
 }
 
-function clearSearch() {
-  elements.searchInput.value = "";
-  elements.clearSearch.hidden = true;
-  applySearch();
-  elements.searchInput.focus();
+function inferSupportLevel(manifest) {
+  const value = String(
+    manifest.supportLevel || manifest.support?.level || manifest.status || ""
+  ).trim().toLowerCase();
+
+  if (value === "testing") {
+    return "Testing";
+  }
+
+  return "Community";
+}
+
+function normalizeLabel(value) {
+  return String(value)
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function populateFilters() {
+  populateSelect(
+    elements.categoryFilter,
+    getUniqueValues(state.plugins.map((plugin) => plugin.category))
+  );
+  populateSelect(
+    elements.engineFilter,
+    getUniqueValues(state.plugins.map((plugin) => plugin.engineVersion))
+  );
+  populateSelect(
+    elements.licenseFilter,
+    getUniqueValues(state.plugins.map((plugin) => plugin.license))
+  );
+}
+
+function populateSelect(select, values) {
+  select.innerHTML = "";
+
+  const anyOption = document.createElement("option");
+  anyOption.value = "any";
+  anyOption.textContent = "Any";
+  select.appendChild(anyOption);
+
+  values.forEach((value) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  });
+}
+
+function getUniqueValues(values) {
+  return [...new Set(values.filter(Boolean))].sort((left, right) =>
+    left.localeCompare(right, undefined, { sensitivity: "base", numeric: true })
+  );
 }
 
 function applySearch() {
   const rawQuery = elements.searchInput.value.trim();
   const query = rawQuery.toLowerCase();
+  const category = elements.categoryFilter.value;
+  const engineVersion = elements.engineFilter.value;
+  const license = elements.licenseFilter.value;
+  const hasSupportFilter =
+    elements.supportTesting.checked ||
+    elements.supportCommunity.checked ||
+    elements.supportFeatured.checked;
 
   state.filtered = state.plugins.filter((plugin) => {
-    if (!query) {
-      return true;
+    if (query && !plugin.searchText.includes(query)) {
+      return false;
     }
-    return plugin.searchText.includes(query);
+    if (category !== "any" && plugin.category !== category) {
+      return false;
+    }
+    if (engineVersion !== "any" && plugin.engineVersion !== engineVersion) {
+      return false;
+    }
+    if (license !== "any" && plugin.license !== license) {
+      return false;
+    }
+    if (hasSupportFilter && !matchesSupportFilter(plugin)) {
+      return false;
+    }
+    return true;
   });
 
-  state.filtered.sort((left, right) => {
-    const nameSort = left.displayName.localeCompare(right.displayName, undefined, {
-      sensitivity: "base",
-      numeric: true,
-    });
-    if (nameSort !== 0) {
-      return nameSort;
-    }
-    return left.slug.localeCompare(right.slug, undefined, {
-      sensitivity: "base",
-      numeric: true,
-    });
-  });
-
+  sortPlugins(state.filtered);
   renderGrid();
   updateStatus(rawQuery);
+}
+
+function matchesSupportFilter(plugin) {
+  return (
+    (elements.supportTesting.checked && plugin.isTesting) ||
+    (elements.supportCommunity.checked && plugin.isCommunity) ||
+    (elements.supportFeatured.checked && plugin.isFeatured)
+  );
+}
+
+function sortPlugins(plugins) {
+  const sortBy = elements.sortFilter.value;
+
+  plugins.sort((left, right) => {
+    switch (sortBy) {
+      case "name":
+        return compareText(left.displayName, right.displayName);
+      case "author":
+        return compareText(left.manifest.author || "", right.manifest.author || "");
+      case "version":
+        return compareVersions(left.manifest.version || "", right.manifest.version || "");
+      case "size":
+        return (right.download?.size || 0) - (left.download?.size || 0);
+      case "updated":
+      default:
+        return right.updatedTimestamp - left.updatedTimestamp;
+    }
+  });
+
+  if (elements.reverseSort.checked) {
+    plugins.reverse();
+  }
+}
+
+function compareText(left, right) {
+  return String(left).localeCompare(String(right), undefined, {
+    sensitivity: "base",
+    numeric: true,
+  });
+}
+
+function compareVersions(left, right) {
+  const leftParts = String(left).split(/[^0-9]+/).filter(Boolean).map(Number);
+  const rightParts = String(right).split(/[^0-9]+/).filter(Boolean).map(Number);
+  const maxLength = Math.max(leftParts.length, rightParts.length);
+
+  for (let index = 0; index < maxLength; index += 1) {
+    const leftValue = leftParts[index] || 0;
+    const rightValue = rightParts[index] || 0;
+
+    if (leftValue !== rightValue) {
+      return rightValue - leftValue;
+    }
+  }
+
+  return 0;
 }
 
 function updateStatus(rawQuery) {
   const visibleCount = state.filtered.length;
   const totalCount = state.plugins.length;
 
+  elements.pluginCount.textContent = String(totalCount);
   elements.visibleCount.textContent = String(visibleCount);
   elements.emptyState.hidden = visibleCount !== 0;
 
@@ -200,29 +372,27 @@ function updateStatus(rawQuery) {
   if (!rawQuery) {
     elements.resultsStatus.textContent =
       visibleCount === totalCount
-        ? `Showing all ${totalCount} published plugin${totalCount === 1 ? "" : "s"}.`
-        : `Showing ${visibleCount} of ${totalCount} plugins.`;
+        ? `Showing all ${totalCount} published assets.`
+        : `Showing ${visibleCount} of ${totalCount} assets.`;
     return;
   }
 
   elements.resultsStatus.textContent =
     visibleCount === 0
-      ? `No plugins matched "${rawQuery}".`
-      : `Found ${visibleCount} plugin${visibleCount === 1 ? "" : "s"} for "${rawQuery}".`;
+      ? `No assets matched "${rawQuery}".`
+      : `Found ${visibleCount} assets for "${rawQuery}".`;
 }
 
 function renderGrid() {
   elements.pluginGrid.replaceChildren(...state.filtered.map(createCard));
 }
 
-function createCard(plugin, index) {
+function createCard(plugin) {
   const card = document.createElement("article");
   card.className = "plugin-card";
   card.tabIndex = 0;
   card.setAttribute("role", "button");
   card.setAttribute("aria-label", `Open details for ${plugin.displayName}`);
-  card.style.setProperty("--delay", `${Math.min(index, 8) * 45}ms`);
-
   card.addEventListener("click", () => openDetails(plugin.slug));
   card.addEventListener("keydown", (event) => {
     if (event.key === "Enter" || event.key === " ") {
@@ -231,75 +401,75 @@ function createCard(plugin, index) {
     }
   });
 
-  const backdrop = document.createElement("div");
-  backdrop.className = "plugin-card__backdrop";
-  setArtworkBackground(backdrop, plugin.backgroundUrl);
+  const preview = document.createElement("div");
+  preview.className = "plugin-card__preview";
 
-  const content = document.createElement("div");
-  content.className = "plugin-card__content";
+  const thumb = document.createElement("div");
+  thumb.className = "plugin-card__thumb";
+  setArtworkBackground(thumb, plugin.artworkUrl);
+
+  preview.append(thumb, createIconBadge(plugin, "plugin-card__icon"));
+
+  const body = document.createElement("div");
+  body.className = "plugin-card__body";
 
   const header = document.createElement("div");
   header.className = "plugin-card__header";
 
-  const sizeChip = document.createElement("span");
-  sizeChip.className = "card-chip";
-  sizeChip.textContent = plugin.download?.size
-    ? `ZIP ${formatBytes(plugin.download.size)}`
-    : `${plugin.fileCount} file${plugin.fileCount === 1 ? "" : "s"}`;
-
-  header.append(createIconBadge(plugin, "plugin-card__icon"), sizeChip);
-
-  const body = document.createElement("div");
-  body.className = "plugin-card__body";
+  const main = document.createElement("div");
+  main.className = "plugin-card__main";
 
   const title = document.createElement("h2");
   title.className = "plugin-card__title";
   title.textContent = plugin.displayName;
 
-  const subtitle = document.createElement("p");
-  subtitle.className = "plugin-card__subtitle";
-  subtitle.textContent = [plugin.manifest.author, plugin.manifest.version]
-    .filter(Boolean)
-    .join(" | ");
+  const badges = document.createElement("div");
+  badges.className = "plugin-card__badges";
+  badges.append(
+    createBadge(plugin.category, "primary"),
+    createBadge(plugin.engineVersion, "info"),
+    createBadge(plugin.supportLevel, "success")
+  );
+
+  if (plugin.isFeatured) {
+    badges.append(createBadge("Featured", "neutral"));
+  }
 
   const description = document.createElement("p");
   description.className = "plugin-card__description";
   description.textContent =
     plugin.manifest.description || "No description was provided in the manifest.";
 
-  const tagRow = document.createElement("div");
-  tagRow.className = "tag-row";
-  tagRow.append(
-    ...buildTagNodes((plugin.keywords || []).slice(0, 3).map((keyword) => ({ label: keyword })))
-  );
+  main.append(title, badges, description);
 
-  body.append(title, subtitle, description, tagRow);
+  const license = document.createElement("span");
+  license.className = "badge badge--license";
+  license.textContent = plugin.license;
+
+  header.append(main, license);
 
   const footer = document.createElement("div");
   footer.className = "plugin-card__footer";
 
-  const actions = document.createElement("div");
-  actions.className = "plugin-card__actions";
+  const author = document.createElement("p");
+  author.className = "plugin-card__author";
+  author.textContent = plugin.manifest.author || "Unknown author";
 
-  const viewLabel = document.createElement("p");
-  viewLabel.className = "plugin-card__hint";
-  viewLabel.textContent = "View plugin";
+  const meta = document.createElement("p");
+  meta.className = "plugin-card__meta";
+  meta.innerHTML = `<strong>${escapeHtml(plugin.manifest.version || "0.0.0")}</strong> | ${escapeHtml(formatTimestamp(plugin.updatedAt, "date"))}`;
 
-  const download = document.createElement("a");
-  download.className = "card-download";
-  download.href = toSiteUrl(plugin.download?.url);
-  download.download = plugin.download?.name || "";
-  download.textContent = "Download";
-  download.addEventListener("click", (event) => {
-    event.stopPropagation();
-  });
-
-  actions.append(viewLabel);
-  footer.append(actions, download);
-
-  content.append(header, body, footer);
-  card.append(backdrop, content);
+  footer.append(author, meta);
+  body.append(header, footer);
+  card.append(preview, body);
   return card;
+}
+
+function createBadge(label, variant) {
+  const badge = document.createElement("span");
+  badge.className = `badge badge--${variant}`;
+  badge.textContent = label;
+  return badge;
 }
 
 function createIconBadge(plugin, className) {
@@ -317,11 +487,7 @@ function createIconBadge(plugin, className) {
 
   const fallback = document.createElement("div");
   fallback.className = "icon-fallback";
-
-  const initials = document.createElement("span");
-  initials.textContent = initialsFor(plugin.displayName);
-  fallback.appendChild(initials);
-
+  fallback.textContent = initialsFor(plugin.displayName);
   badge.appendChild(fallback);
   return badge;
 }
@@ -332,18 +498,8 @@ function setArtworkBackground(target, imageUrl) {
   }
 
   const safeUrl = toSiteUrl(imageUrl).replace(/"/g, "%22");
-  target.style.backgroundImage = `var(--card-art-overlay), url("${safeUrl}")`;
-}
-
-function buildTagNodes(entries) {
-  return entries
-    .filter(Boolean)
-    .map((entry) => {
-      const tag = document.createElement("span");
-      tag.className = entry.warm ? "tag tag--warm" : "tag";
-      tag.textContent = entry.label;
-      return tag;
-    });
+  target.style.backgroundImage =
+    `linear-gradient(180deg, rgba(10, 12, 14, 0.08) 0%, rgba(10, 12, 14, 0.72) 100%), url("${safeUrl}")`;
 }
 
 function initialsFor(value) {
@@ -364,7 +520,7 @@ function toSiteUrl(path) {
   return new URL(path, document.baseURI).toString();
 }
 
-function formatTimestamp(value) {
+function formatTimestamp(value, style = "dateTime") {
   if (!value) {
     return "Unknown";
   }
@@ -374,13 +530,17 @@ function formatTimestamp(value) {
     return value;
   }
 
-  return new Intl.DateTimeFormat(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  if (style === "date") {
+    return `${year}-${month}-${day}`;
+  }
+
+  return `${year}-${month}-${day} ${String(date.getHours()).padStart(2, "0")}:${String(
+    date.getMinutes()
+  ).padStart(2, "0")}`;
 }
 
 function formatBytes(value) {
@@ -401,6 +561,15 @@ function formatBytes(value) {
   }
 
   return `${size >= 10 || unit === "B" ? size.toFixed(0) : size.toFixed(1)} ${unit}`;
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function getHashSlug() {
@@ -495,18 +664,26 @@ function renderDetail(summary, detail) {
   const hero = document.createElement("section");
   hero.className = "detail-hero";
 
-  const art = createDetailArtwork(summary, detail);
+  const preview = createDetailPreview(summary, detail);
 
-  const body = document.createElement("div");
-  body.className = "detail-hero__copy";
-
-  const eyebrow = document.createElement("p");
-  eyebrow.className = "eyebrow";
-  eyebrow.textContent = manifest.id || detail.slug;
+  const copy = document.createElement("div");
+  copy.className = "detail-copy";
 
   const title = document.createElement("h2");
   title.id = "detail-title";
   title.textContent = manifest.name || detail.slug;
+
+  const badges = document.createElement("div");
+  badges.className = "detail-badges";
+  badges.append(
+    createBadge(summary.category, "primary"),
+    createBadge(summary.engineVersion, "info"),
+    createBadge(summary.supportLevel, "success")
+  );
+
+  if (summary.isFeatured) {
+    badges.append(createBadge("Featured", "neutral"));
+  }
 
   const subtitle = document.createElement("p");
   subtitle.className = "detail-subtitle";
@@ -521,42 +698,51 @@ function renderDetail(summary, detail) {
     createExternalLink("Repository", manifest.repository)
   );
 
-  const tags = document.createElement("div");
-  tags.className = "tag-row";
-  tags.append(
-    ...buildTagNodes([
-      manifest.author ? { label: manifest.author } : null,
-      ...keywordTags.map((keyword) => ({ label: keyword })),
-    ])
-  );
-
-  body.append(eyebrow, title, subtitle, actions, tags);
-  hero.append(art, body);
+  copy.append(title, badges, subtitle, actions);
+  hero.append(preview, copy);
 
   const meta = document.createElement("section");
   meta.className = "meta-grid";
   meta.append(
+    createMetaItem("Plugin id", manifest.id || detail.slug),
     createMetaItem("Version", manifest.version || "Unknown"),
     createMetaItem("License", manifest.license || "Unspecified"),
     createMetaItem("Engine", manifest.engine?.minVersion || "Not set"),
-    createMetaItem("Main File", manifest.main || "Not set"),
-    createMetaItem("Updated", formatTimestamp(detail.updatedAt)),
+    createMetaItem("Updated", formatTimestamp(detail.updatedAt, "date")),
     createMetaItem("Archive", formatBytes(detail.download?.size || 0))
   );
 
   const linksSection = document.createElement("section");
   linksSection.className = "detail-section";
   const linksHeading = document.createElement("h3");
-  linksHeading.textContent = "Manifest links";
+  linksHeading.textContent = "Links";
   const linksList = document.createElement("div");
   linksList.className = "detail-list";
   linksList.append(
-    createLinkRow("Plugin id", manifest.id || detail.slug),
     createLinkRow("Source folder", detail.sourceDir || "Unavailable"),
     createLinkRow("Download URL", detail.download?.url || "Unavailable"),
     createLinkRow("Archive SHA-256", detail.download?.sha256 || "Unavailable")
   );
   linksSection.append(linksHeading, linksList);
+
+  const tagsSection = document.createElement("section");
+  tagsSection.className = "detail-section";
+  const tagsHeading = document.createElement("h3");
+  tagsHeading.textContent = "Tags";
+  const tags = document.createElement("div");
+  tags.className = "tag-row";
+  tags.append(
+    ...[
+      manifest.author ? manifest.author : null,
+      ...keywordTags,
+    ]
+      .filter(Boolean)
+      .map((entry) => createTag(entry))
+  );
+  tagsSection.append(
+    tagsHeading,
+    tags.childElementCount ? tags : createMessageBlock("", "This plugin has no tags yet.")
+  );
 
   const dependencySection = document.createElement("section");
   dependencySection.className = "detail-section";
@@ -612,6 +798,7 @@ function renderDetail(summary, detail) {
     hero,
     meta,
     linksSection,
+    tagsSection,
     dependencySection,
     permissionSection,
     fileSection,
@@ -619,6 +806,33 @@ function renderDetail(summary, detail) {
   );
 
   elements.detailContent.replaceChildren(content);
+}
+
+function createDetailPreview(summary, detail) {
+  const preview = document.createElement("div");
+  preview.className = "detail-preview";
+
+  const thumb = document.createElement("div");
+  thumb.className = "detail-preview__thumb";
+  setArtworkBackground(thumb, detail.assets?.thumbnailUrl || detail.assets?.iconUrl || summary.artworkUrl);
+
+  const icon = createIconBadge(
+    {
+      displayName: summary.displayName,
+      iconUrl: detail.assets?.iconUrl || summary.iconUrl,
+    },
+    "detail-preview__icon"
+  );
+
+  preview.append(thumb, icon);
+  return preview;
+}
+
+function createTag(label) {
+  const tag = document.createElement("span");
+  tag.className = "tag";
+  tag.textContent = label;
+  return tag;
 }
 
 function createLinkButton(label, url, className, downloadName = "") {
@@ -699,7 +913,7 @@ function createLinkRow(label, value) {
 function createTokenList(className, entries) {
   const list = document.createElement("div");
   list.className = className;
-  list.append(...entries.map((entry) => buildTagNodes([{ label: entry }])[0]));
+  list.append(...entries.map((entry) => createTag(entry)));
   return list;
 }
 
@@ -730,29 +944,6 @@ function createMessageBlock(title, description) {
   text.textContent = description;
   block.appendChild(text);
   return block;
-}
-
-function createDetailArtwork(summary, detail) {
-  const artwork = document.createElement("div");
-  artwork.className = "detail-artwork";
-
-  const backdrop = document.createElement("div");
-  backdrop.className = "detail-artwork__backdrop";
-  setArtworkBackground(
-    backdrop,
-    detail.assets?.thumbnailUrl || detail.assets?.iconUrl || summary.backgroundUrl
-  );
-
-  const icon = createIconBadge(
-    {
-      displayName: summary.displayName,
-      iconUrl: detail.assets?.iconUrl || summary.iconUrl,
-    },
-    "detail-artwork__icon"
-  );
-
-  artwork.append(backdrop, icon);
-  return artwork;
 }
 
 function showDetailPanel() {
