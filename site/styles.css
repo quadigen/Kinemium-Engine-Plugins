@@ -294,9 +294,11 @@ code {
 
 .catalog {
   display: grid;
+  grid-column: 2;
   align-self: start;
   align-content: start;
   gap: 1rem;
+  min-width: 0;
 }
 
 .catalog__header {
