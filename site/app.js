@@ -5,6 +5,8 @@ const state = {
   activeSlug: null,
   detailCache: new Map(),
   theme: "dark",
+  currentPage: 1,
+  itemsPerPage: 20,
 };
 
 const THEME_STORAGE_KEY = "kinemium-theme";
@@ -23,8 +25,13 @@ const elements = {
   licenseFilter: document.querySelector("#license-filter"),
   sortFilter: document.querySelector("#sort-filter"),
   reverseSort: document.querySelector("#reverse-sort"),
+  limitFilter: document.querySelector("#limit-filter"),
   resultsStatus: document.querySelector("#results-status"),
   pluginGrid: document.querySelector("#plugin-grid"),
+  paginationControls: document.querySelector("#pagination-controls"),
+  prevPage: document.querySelector("#prev-page"),
+  nextPage: document.querySelector("#next-page"),
+  pageInfo: document.querySelector("#page-info"),
   emptyState: document.querySelector("#empty-state"),
   errorState: document.querySelector("#error-state"),
   detailOverlay: document.querySelector("#detail-overlay"),
@@ -53,6 +60,9 @@ function wireEvents() {
   elements.licenseFilter.addEventListener("change", applySearch);
   elements.sortFilter.addEventListener("change", applySearch);
   elements.reverseSort.addEventListener("change", applySearch);
+  elements.limitFilter.addEventListener("change", handleLimitChange);
+  elements.prevPage.addEventListener("click", goToPreviousPage);
+  elements.nextPage.addEventListener("click", goToNextPage);
   elements.detailClose.addEventListener("click", closeDetails);
   elements.detailOverlay.addEventListener("click", closeDetails);
   elements.themeToggle.addEventListener("click", toggleTheme);
@@ -113,6 +123,16 @@ async function loadRegistry() {
   try {
     const response = await fetch("plugins.json", { cache: "no-store" });
     if (!response.ok) {
+      if (response.status === 404) {
+        elements.resultsStatus.textContent = "No plugins available yet. Run the artifact generation workflow to create plugins.";
+        elements.pluginCount.textContent = "0";
+        elements.generatedAt.textContent = "Unavailable";
+        elements.pluginGrid.replaceChildren();
+        elements.emptyState.hidden = false;
+        elements.emptyState.querySelector("h2").textContent = "No plugins available";
+        elements.emptyState.querySelector("p").textContent = "The plugin registry has not been generated yet. Run the artifact generation workflow to create plugins.";
+        return;
+      }
       throw new Error(`Failed to load plugins.json: ${response.status}`);
     }
 
@@ -295,6 +315,7 @@ function applySearch() {
     return true;
   });
 
+  state.currentPage = 1;
   sortPlugins(state.filtered);
   renderGrid();
   updateStatus(rawQuery);
@@ -357,12 +378,16 @@ function compareVersions(left, right) {
 }
 
 function updateStatus(rawQuery) {
-  const visibleCount = state.filtered.length;
   const totalCount = state.plugins.length;
+  const filteredCount = state.filtered.length;
+  const totalPages = Math.ceil(filteredCount / state.itemsPerPage);
+  const startIndex = (state.currentPage - 1) * state.itemsPerPage;
+  const endIndex = Math.min(startIndex + state.itemsPerPage, filteredCount);
+  const visibleCount = endIndex - startIndex;
 
   elements.pluginCount.textContent = String(totalCount);
   elements.visibleCount.textContent = String(visibleCount);
-  elements.emptyState.hidden = visibleCount !== 0;
+  elements.emptyState.hidden = filteredCount !== 0;
 
   if (!state.registry) {
     elements.resultsStatus.textContent = "Loading plugin registry...";
@@ -371,20 +396,59 @@ function updateStatus(rawQuery) {
 
   if (!rawQuery) {
     elements.resultsStatus.textContent =
-      visibleCount === totalCount
+      filteredCount === totalCount
         ? `Showing all ${totalCount} published assets.`
-        : `Showing ${visibleCount} of ${totalCount} assets.`;
+        : `Showing ${visibleCount} of ${filteredCount} assets (page ${state.currentPage} of ${totalPages}).`;
     return;
   }
 
   elements.resultsStatus.textContent =
-    visibleCount === 0
+    filteredCount === 0
       ? `No assets matched "${rawQuery}".`
-      : `Found ${visibleCount} assets for "${rawQuery}".`;
+      : `Found ${filteredCount} assets for "${rawQuery}" (showing ${visibleCount} on page ${state.currentPage} of ${totalPages}).`;
 }
 
 function renderGrid() {
-  elements.pluginGrid.replaceChildren(...state.filtered.map(createCard));
+  const startIndex = (state.currentPage - 1) * state.itemsPerPage;
+  const endIndex = startIndex + state.itemsPerPage;
+  const pagePlugins = state.filtered.slice(startIndex, endIndex);
+
+  elements.pluginGrid.replaceChildren(...pagePlugins.map(createCard));
+  updatePaginationControls();
+}
+
+function handleLimitChange() {
+  state.itemsPerPage = parseInt(elements.limitFilter.value, 10);
+  state.currentPage = 1;
+  renderGrid();
+  updateStatus(elements.searchInput.value.trim());
+}
+
+function goToPreviousPage() {
+  if (state.currentPage > 1) {
+    state.currentPage -= 1;
+    renderGrid();
+    updateStatus(elements.searchInput.value.trim());
+  }
+}
+
+function goToNextPage() {
+  const totalPages = Math.ceil(state.filtered.length / state.itemsPerPage);
+  if (state.currentPage < totalPages) {
+    state.currentPage += 1;
+    renderGrid();
+    updateStatus(elements.searchInput.value.trim());
+  }
+}
+
+function updatePaginationControls() {
+  const totalPages = Math.ceil(state.filtered.length / state.itemsPerPage);
+  const hasPlugins = state.filtered.length > 0;
+
+  elements.paginationControls.hidden = !hasPlugins || totalPages <= 1;
+  elements.prevPage.disabled = state.currentPage <= 1;
+  elements.nextPage.disabled = state.currentPage >= totalPages;
+  elements.pageInfo.textContent = `Page ${state.currentPage} of ${totalPages}`;
 }
 
 function createCard(plugin) {
@@ -401,23 +465,36 @@ function createCard(plugin) {
     }
   });
 
-  const preview = document.createElement("div");
-  preview.className = "plugin-card__preview";
-
   const thumb = document.createElement("div");
   thumb.className = "plugin-card__thumb";
-  setArtworkBackground(thumb, plugin.artworkUrl);
 
-  preview.append(thumb, createIconBadge(plugin, "plugin-card__icon"));
+  if (plugin.thumbnailUrl) {
+    const img = document.createElement("img");
+    img.src = plugin.thumbnailUrl;
+    img.alt = `${plugin.displayName} thumbnail`;
+    img.loading = "lazy";
+    thumb.appendChild(img);
+  }
 
-  const body = document.createElement("div");
-  body.className = "plugin-card__body";
+  const content = document.createElement("div");
+  content.className = "plugin-card__content";
 
   const header = document.createElement("div");
   header.className = "plugin-card__header";
 
-  const main = document.createElement("div");
-  main.className = "plugin-card__main";
+  const icon = document.createElement("div");
+  icon.className = "plugin-card__icon";
+  if (plugin.iconUrl) {
+    const iconImg = document.createElement("img");
+    iconImg.src = plugin.iconUrl;
+    iconImg.alt = `${plugin.displayName} icon`;
+    icon.appendChild(iconImg);
+  } else {
+    const fallback = document.createElement("div");
+    fallback.className = "icon-fallback";
+    fallback.textContent = initialsFor(plugin.displayName);
+    icon.appendChild(fallback);
+  }
 
   const title = document.createElement("h2");
   title.className = "plugin-card__title";
@@ -426,43 +503,88 @@ function createCard(plugin) {
   const badges = document.createElement("div");
   badges.className = "plugin-card__badges";
   badges.append(
-    createBadge(plugin.category, "primary"),
-    createBadge(plugin.engineVersion, "info"),
-    createBadge(plugin.supportLevel, "success")
+    createCardBadge("Server"),
+    createCardBadge("Fabric"),
+    createCardBadge("Forge"),
+    createCardBadge("NeoForge")
   );
 
-  if (plugin.isFeatured) {
-    badges.append(createBadge("Featured", "neutral"));
-  }
+  header.append(icon, title, badges);
 
   const description = document.createElement("p");
   description.className = "plugin-card__description";
   description.textContent =
     plugin.manifest.description || "No description was provided in the manifest.";
 
-  main.append(title, badges, description);
-
-  const license = document.createElement("span");
-  license.className = "badge badge--license";
-  license.textContent = plugin.license;
-
-  header.append(main, license);
-
   const footer = document.createElement("div");
   footer.className = "plugin-card__footer";
 
   const author = document.createElement("p");
   author.className = "plugin-card__author";
-  author.textContent = plugin.manifest.author || "Unknown author";
+  author.textContent = `by ${plugin.manifest.author || "Unknown author"}`;
 
-  const meta = document.createElement("p");
-  meta.className = "plugin-card__meta";
-  meta.innerHTML = `<strong>${escapeHtml(plugin.manifest.version || "0.0.0")}</strong> | ${escapeHtml(formatTimestamp(plugin.updatedAt, "date"))}`;
+  const stats = document.createElement("div");
+  stats.className = "plugin-card__stats";
 
-  footer.append(author, meta);
-  body.append(header, footer);
-  card.append(preview, body);
+  const downloads = document.createElement("div");
+  downloads.className = "plugin-card__stat";
+  downloads.innerHTML = `<span>↓</span> ${formatNumber(plugin.download?.count || 0)}`;
+
+  const likes = document.createElement("div");
+  likes.className = "plugin-card__stat";
+  likes.innerHTML = `<span>♥</span> ${formatNumber(plugin.download?.count || 0)}`;
+
+  const updated = document.createElement("div");
+  updated.className = "plugin-card__stat";
+  updated.textContent = formatTimestamp(plugin.updatedAt, "date");
+
+  stats.append(downloads, likes, updated);
+  footer.append(author, stats);
+
+  content.append(header, description, footer);
+  card.append(thumb, content);
   return card;
+}
+
+function createCardBadge(label) {
+  const badge = document.createElement("span");
+  badge.className = "plugin-card__badge";
+  badge.textContent = label;
+  return badge;
+}
+
+function setCardBackground(target, imageUrl) {
+  if (!imageUrl) {
+    target.style.background = "linear-gradient(135deg, #f97316 0%, #fb923c 100%)";
+    return;
+  }
+
+  const safeUrl = toSiteUrl(imageUrl).replace(/"/g, "%22");
+  target.style.backgroundImage = `url("${safeUrl}")`;
+}
+
+function setArtworkBackground(target, imageUrl) {
+  if (!imageUrl) {
+    return;
+  }
+
+  const safeUrl = toSiteUrl(imageUrl).replace(/"/g, "%22");
+  target.style.backgroundImage =
+    `linear-gradient(180deg, rgba(10, 12, 14, 0.08) 0%, rgba(10, 12, 14, 0.72) 100%), url("${safeUrl}")`;
+}
+
+function formatNumber(value) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "0";
+  }
+
+  if (value >= 1000000) {
+    return `${(value / 1000000).toFixed(1)}M`;
+  }
+  if (value >= 1000) {
+    return `${(value / 1000).toFixed(1)}K`;
+  }
+  return String(value);
 }
 
 function createBadge(label, variant) {
