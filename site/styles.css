@@ -294,6 +294,8 @@ code {
 
 .catalog {
   display: grid;
+  align-self: start;
+  align-content: start;
   gap: 1rem;
 }
 
