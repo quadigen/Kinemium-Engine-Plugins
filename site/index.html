@@ -8,69 +8,77 @@
       name="description"
       content="Browse, search, inspect, and download workflow-built Kinemium Engine plugins."
     >
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap"
+    >
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="styles.css">
     <script defer src="app.js"></script>
   </head>
   <body>
     <div class="page-shell">
+      <header class="topbar">
+        <div class="brand">
+          <img class="brand__mark" src="favicon.svg" alt="">
+          <div class="brand__copy">
+            <strong>Kinemium</strong>
+            <span>Plugin Registry</span>
+          </div>
+        </div>
+
+        <button id="theme-toggle" class="theme-toggle" type="button" aria-live="polite">
+          <span class="theme-toggle__track">
+            <span class="theme-toggle__thumb"></span>
+          </span>
+          <span class="theme-toggle__copy">
+            <span class="theme-toggle__eyebrow">Theme</span>
+            <strong id="theme-toggle-label">Dark</strong>
+          </span>
+        </button>
+      </header>
+
       <header class="hero">
-        <p class="eyebrow">GitHub Pages Plugin Registry</p>
-        <div class="hero__content">
-          <div class="hero__copy">
-            <h1>Search every published Kinemium plugin from one fast catalog.</h1>
-            <p class="hero__lede">
-              The workflow builds this registry automatically, so contributors can ship plugins
-              and users can browse metadata, inspect files, and grab ready-to-download archives.
-            </p>
-          </div>
-          <div class="hero__stats">
-            <article class="stat-card">
-              <span class="stat-card__label">Plugins</span>
-              <strong id="plugin-count">0</strong>
-            </article>
-            <article class="stat-card">
-              <span class="stat-card__label">Visible</span>
-              <strong id="visible-count">0</strong>
-            </article>
-            <article class="stat-card">
-              <span class="stat-card__label">Updated</span>
-              <strong id="generated-at">Waiting for data</strong>
-            </article>
-          </div>
+        <p class="eyebrow">Workflow-Built Plugin Catalog</p>
+        <h1>Plugins</h1>
+        <p class="hero__lede">Install plugins to improve your experience in Kinemium Engine</p>
+
+        <div class="hero__stats">
+          <article class="stat-card">
+            <span class="stat-card__label">Plugins</span>
+            <strong id="plugin-count">0</strong>
+          </article>
+          <article class="stat-card">
+            <span class="stat-card__label">Visible</span>
+            <strong id="visible-count">0</strong>
+          </article>
+          <article class="stat-card">
+            <span class="stat-card__label">Updated</span>
+            <strong id="generated-at">Waiting for data</strong>
+          </article>
         </div>
       </header>
 
       <main class="layout">
         <section class="toolbar" aria-label="Plugin search">
-          <label class="search-field">
-            <span>Search the registry</span>
-            <input
-              id="search-input"
-              type="search"
-              autocomplete="off"
-              spellcheck="false"
-              placeholder="Search by name, author, keyword, plugin id, or description"
-            >
-          </label>
-
+          <div class="search-shell">
+            <label class="search-shell__label" for="search-input">Search plugins</label>
+            <div class="search-shell__row">
+              <input
+                id="search-input"
+                type="search"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="Search plugins by name, author, keyword, id, or description"
+              >
+              <button id="clear-search" class="clear-button" type="button" hidden>Clear</button>
+            </div>
+          </div>
           <div class="toolbar__summary">
             <p id="results-status">Loading plugin registry...</p>
-            <button id="clear-search" class="ghost-button" type="button" hidden>Clear search</button>
-          </div>
-        </section>
-
-        <section id="spotlight" class="spotlight" hidden>
-          <div class="spotlight__media" id="spotlight-media" aria-hidden="true"></div>
-          <div class="spotlight__body">
-            <p class="eyebrow">Spotlight</p>
-            <h2 id="spotlight-title"></h2>
-            <p id="spotlight-description" class="spotlight__description"></p>
-            <div id="spotlight-tags" class="tag-row"></div>
-            <div class="spotlight__actions">
-              <button id="spotlight-view" class="primary-button" type="button">View plugin</button>
-              <a id="spotlight-download" class="ghost-button" href="#">Download zip</a>
-            </div>
+            <p class="toolbar__hint">Select any plugin card to inspect its files, README, and download.</p>
           </div>
         </section>
 
@@ -98,4 +106,3 @@
     </aside>
   </body>
 </html>
-

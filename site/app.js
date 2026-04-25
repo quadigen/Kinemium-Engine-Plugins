@@ -4,7 +4,10 @@ const state = {
   filtered: [],
   activeSlug: null,
   detailCache: new Map(),
+  theme: "dark",
 };
+
+const THEME_STORAGE_KEY = "kinemium-theme";
 
 const elements = {
   pluginCount: document.querySelector("#plugin-count"),
@@ -14,13 +17,6 @@ const elements = {
   clearSearch: document.querySelector("#clear-search"),
   resultsStatus: document.querySelector("#results-status"),
   pluginGrid: document.querySelector("#plugin-grid"),
-  spotlight: document.querySelector("#spotlight"),
-  spotlightMedia: document.querySelector("#spotlight-media"),
-  spotlightTitle: document.querySelector("#spotlight-title"),
-  spotlightDescription: document.querySelector("#spotlight-description"),
-  spotlightTags: document.querySelector("#spotlight-tags"),
-  spotlightView: document.querySelector("#spotlight-view"),
-  spotlightDownload: document.querySelector("#spotlight-download"),
   emptyState: document.querySelector("#empty-state"),
   errorState: document.querySelector("#error-state"),
   detailOverlay: document.querySelector("#detail-overlay"),
@@ -28,9 +24,12 @@ const elements = {
   detailClose: document.querySelector("#detail-close"),
   detailLoading: document.querySelector("#detail-loading"),
   detailContent: document.querySelector("#detail-content"),
+  themeToggle: document.querySelector("#theme-toggle"),
+  themeToggleLabel: document.querySelector("#theme-toggle-label"),
 };
 
 document.addEventListener("DOMContentLoaded", () => {
+  initializeTheme();
   wireEvents();
   loadRegistry();
 });
@@ -40,6 +39,7 @@ function wireEvents() {
   elements.clearSearch.addEventListener("click", clearSearch);
   elements.detailClose.addEventListener("click", closeDetails);
   elements.detailOverlay.addEventListener("click", closeDetails);
+  elements.themeToggle.addEventListener("click", toggleTheme);
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && state.activeSlug) {
@@ -48,6 +48,46 @@ function wireEvents() {
   });
 
   window.addEventListener("hashchange", handleHashChange);
+}
+
+function initializeTheme() {
+  let savedTheme = "dark";
+
+  try {
+    const value = window.localStorage.getItem(THEME_STORAGE_KEY);
+    if (value === "light" || value === "dark") {
+      savedTheme = value;
+    }
+  } catch (error) {
+    savedTheme = "dark";
+  }
+
+  applyTheme(savedTheme);
+}
+
+function applyTheme(theme) {
+  state.theme = theme;
+  document.documentElement.dataset.theme = theme;
+  elements.themeToggleLabel.textContent = theme === "dark" ? "Dark" : "Light";
+  elements.themeToggle.setAttribute(
+    "aria-label",
+    `Switch to ${theme === "dark" ? "light" : "dark"} theme`
+  );
+  elements.themeToggle.setAttribute(
+    "title",
+    `Switch to ${theme === "dark" ? "light" : "dark"} theme`
+  );
+}
+
+function toggleTheme() {
+  const nextTheme = state.theme === "dark" ? "light" : "dark";
+  applyTheme(nextTheme);
+
+  try {
+    window.localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+  } catch (error) {
+    return;
+  }
 }
 
 async function loadRegistry() {
@@ -97,7 +137,9 @@ function normalizePlugin(plugin) {
     keywords,
     searchText,
     displayName: manifest.name || plugin.slug,
-    previewUrl: plugin.assets?.thumbnailUrl || plugin.assets?.iconUrl || null,
+    iconUrl: plugin.assets?.iconUrl || null,
+    thumbnailUrl: plugin.assets?.thumbnailUrl || null,
+    backgroundUrl: plugin.assets?.thumbnailUrl || plugin.assets?.iconUrl || null,
   };
 }
 
@@ -139,7 +181,6 @@ function applySearch() {
     });
   });
 
-  renderSpotlight();
   renderGrid();
   updateStatus(rawQuery);
 }
@@ -170,62 +211,59 @@ function updateStatus(rawQuery) {
       : `Found ${visibleCount} plugin${visibleCount === 1 ? "" : "s"} for "${rawQuery}".`;
 }
 
-function renderSpotlight() {
-  const featured = state.filtered[0];
-  if (!featured) {
-    elements.spotlight.hidden = true;
-    return;
-  }
-
-  elements.spotlight.hidden = false;
-  elements.spotlightTitle.textContent = featured.displayName;
-  elements.spotlightDescription.textContent =
-    featured.manifest.description || "No description was provided in the manifest.";
-
-  elements.spotlightMedia.replaceChildren(createArtContent(featured));
-  elements.spotlightTags.replaceChildren(
-    ...buildTagNodes([
-      featured.manifest.author ? { label: featured.manifest.author, warm: true } : null,
-      ...(featured.keywords || []).slice(0, 4).map((keyword) => ({ label: keyword })),
-    ])
-  );
-
-  elements.spotlightView.onclick = () => openDetails(featured.slug);
-  elements.spotlightDownload.href = toSiteUrl(featured.download?.url);
-  elements.spotlightDownload.download = featured.download?.name || "";
-}
-
 function renderGrid() {
   elements.pluginGrid.replaceChildren(...state.filtered.map(createCard));
 }
 
 function createCard(plugin, index) {
-  const card = document.createElement("button");
-  card.type = "button";
+  const card = document.createElement("article");
   card.className = "plugin-card";
+  card.tabIndex = 0;
+  card.setAttribute("role", "button");
+  card.setAttribute("aria-label", `Open details for ${plugin.displayName}`);
   card.style.setProperty("--delay", `${Math.min(index, 8) * 45}ms`);
-  card.addEventListener("click", () => openDetails(plugin.slug));
 
-  const art = document.createElement("div");
-  art.className = "card-art";
-  art.appendChild(createArtContent(plugin));
+  card.addEventListener("click", () => openDetails(plugin.slug));
+  card.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      openDetails(plugin.slug);
+    }
+  });
+
+  const backdrop = document.createElement("div");
+  backdrop.className = "plugin-card__backdrop";
+  setArtworkBackground(backdrop, plugin.backgroundUrl);
+
+  const content = document.createElement("div");
+  content.className = "plugin-card__content";
 
   const header = document.createElement("div");
-  header.className = "card-header";
+  header.className = "plugin-card__header";
+
+  const sizeChip = document.createElement("span");
+  sizeChip.className = "card-chip";
+  sizeChip.textContent = plugin.download?.size
+    ? `ZIP ${formatBytes(plugin.download.size)}`
+    : `${plugin.fileCount} file${plugin.fileCount === 1 ? "" : "s"}`;
+
+  header.append(createIconBadge(plugin, "plugin-card__icon"), sizeChip);
+
+  const body = document.createElement("div");
+  body.className = "plugin-card__body";
 
   const title = document.createElement("h2");
+  title.className = "plugin-card__title";
   title.textContent = plugin.displayName;
 
   const subtitle = document.createElement("p");
-  subtitle.className = "card-subtitle";
-  subtitle.textContent = [plugin.manifest.version, plugin.manifest.author]
+  subtitle.className = "plugin-card__subtitle";
+  subtitle.textContent = [plugin.manifest.author, plugin.manifest.version]
     .filter(Boolean)
     .join(" | ");
 
-  header.append(title, subtitle);
-
   const description = document.createElement("p");
-  description.className = "card-description";
+  description.className = "plugin-card__description";
   description.textContent =
     plugin.manifest.description || "No description was provided in the manifest.";
 
@@ -235,11 +273,17 @@ function createCard(plugin, index) {
     ...buildTagNodes((plugin.keywords || []).slice(0, 3).map((keyword) => ({ label: keyword })))
   );
 
-  const actions = document.createElement("div");
-  actions.className = "card-actions";
+  body.append(title, subtitle, description, tagRow);
 
-  const viewLabel = document.createElement("span");
-  viewLabel.textContent = `${plugin.fileCount} file${plugin.fileCount === 1 ? "" : "s"}`;
+  const footer = document.createElement("div");
+  footer.className = "plugin-card__footer";
+
+  const actions = document.createElement("div");
+  actions.className = "plugin-card__actions";
+
+  const viewLabel = document.createElement("p");
+  viewLabel.className = "plugin-card__hint";
+  viewLabel.textContent = "View plugin";
 
   const download = document.createElement("a");
   download.className = "card-download";
@@ -250,28 +294,45 @@ function createCard(plugin, index) {
     event.stopPropagation();
   });
 
-  actions.append(viewLabel, download);
-  card.append(art, header, description, tagRow, actions);
+  actions.append(viewLabel);
+  footer.append(actions, download);
+
+  content.append(header, body, footer);
+  card.append(backdrop, content);
   return card;
 }
 
-function createArtContent(plugin) {
-  const imageUrl = plugin.previewUrl;
-  if (imageUrl) {
-    const img = document.createElement("img");
-    img.alt = `${plugin.displayName} artwork`;
-    img.loading = "lazy";
-    img.src = toSiteUrl(imageUrl);
-    return img;
+function createIconBadge(plugin, className) {
+  const badge = document.createElement("div");
+  badge.className = className;
+
+  if (plugin.iconUrl) {
+    const image = document.createElement("img");
+    image.alt = `${plugin.displayName} icon`;
+    image.loading = "lazy";
+    image.src = toSiteUrl(plugin.iconUrl);
+    badge.appendChild(image);
+    return badge;
   }
 
   const fallback = document.createElement("div");
-  fallback.className = "fallback-art";
+  fallback.className = "icon-fallback";
 
   const initials = document.createElement("span");
   initials.textContent = initialsFor(plugin.displayName);
   fallback.appendChild(initials);
-  return fallback;
+
+  badge.appendChild(fallback);
+  return badge;
+}
+
+function setArtworkBackground(target, imageUrl) {
+  if (!imageUrl) {
+    return;
+  }
+
+  const safeUrl = toSiteUrl(imageUrl).replace(/"/g, "%22");
+  target.style.backgroundImage = `var(--card-art-overlay), url("${safeUrl}")`;
 }
 
 function buildTagNodes(entries) {
@@ -434,17 +495,10 @@ function renderDetail(summary, detail) {
   const hero = document.createElement("section");
   hero.className = "detail-hero";
 
-  const art = document.createElement("div");
-  art.className = "detail-art";
-  art.appendChild(
-    createArtContent({
-      ...summary,
-      previewUrl: detail.assets?.thumbnailUrl || detail.assets?.iconUrl || summary.previewUrl,
-    })
-  );
+  const art = createDetailArtwork(summary, detail);
 
   const body = document.createElement("div");
-  body.className = "detail-hero__body";
+  body.className = "detail-hero__copy";
 
   const eyebrow = document.createElement("p");
   eyebrow.className = "eyebrow";
@@ -471,7 +525,7 @@ function renderDetail(summary, detail) {
   tags.className = "tag-row";
   tags.append(
     ...buildTagNodes([
-      manifest.author ? { label: manifest.author, warm: true } : null,
+      manifest.author ? { label: manifest.author } : null,
       ...keywordTags.map((keyword) => ({ label: keyword })),
     ])
   );
@@ -630,7 +684,15 @@ function createMetaItem(label, value) {
 
 function createLinkRow(label, value) {
   const row = document.createElement("div");
-  row.textContent = `${label}: ${value}`;
+  row.className = "detail-list__row";
+
+  const title = document.createElement("span");
+  title.textContent = label;
+
+  const body = document.createElement("strong");
+  body.textContent = value;
+
+  row.append(title, body);
   return row;
 }
 
@@ -658,6 +720,7 @@ function createFileRow(file) {
 
 function createMessageBlock(title, description) {
   const block = document.createElement("div");
+  block.className = "message-block";
   if (title) {
     const strong = document.createElement("strong");
     strong.textContent = title;
@@ -667,6 +730,29 @@ function createMessageBlock(title, description) {
   text.textContent = description;
   block.appendChild(text);
   return block;
+}
+
+function createDetailArtwork(summary, detail) {
+  const artwork = document.createElement("div");
+  artwork.className = "detail-artwork";
+
+  const backdrop = document.createElement("div");
+  backdrop.className = "detail-artwork__backdrop";
+  setArtworkBackground(
+    backdrop,
+    detail.assets?.thumbnailUrl || detail.assets?.iconUrl || summary.backgroundUrl
+  );
+
+  const icon = createIconBadge(
+    {
+      displayName: summary.displayName,
+      iconUrl: detail.assets?.iconUrl || summary.iconUrl,
+    },
+    "detail-artwork__icon"
+  );
+
+  artwork.append(backdrop, icon);
+  return artwork;
 }
 
 function showDetailPanel() {
