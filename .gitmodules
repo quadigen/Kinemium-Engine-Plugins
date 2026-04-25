@@ -1,3 +1,7 @@
 [submodule "plugins/Kinemium-Template-Plugin"]
 	path = plugins/Kinemium-Template-Plugin
 	url = https://github.com/quadigen/Kinemium-Template-Plugin
+
+[submodule "plugins/kinemium-oneko"]
+	path = plugins/kinemium-oneko
+	url = https://github.com/Qquaded/kinemium-oneko
