@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="Kinemium Plugin Registry">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffb36b" />
+      <stop offset="100%" stop-color="#0c6c73" />
+    </linearGradient>
+  </defs>
+  <rect width="96" height="96" rx="24" fill="#f6efe4" />
+  <path d="M22 20h18v56H22z" fill="#14213d" />
+  <path d="M48 20h26L48 48l26 28H48L26 48z" fill="url(#bg)" />
+</svg>
+

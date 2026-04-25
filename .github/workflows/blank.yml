@@ -5,7 +5,7 @@ on:
     branches: [main]
   workflow_dispatch:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: "0 */6 * * *"
 
 concurrency:
   group: pages
@@ -29,112 +29,13 @@ jobs:
       - name: Update submodules to latest
         run: git submodule update --remote --merge
 
-      - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y jq zstd
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-      - name: Build plugin database
-        run: |
-          set -euo pipefail
-
-          mkdir -p public/plugins public/files
-          entries_dir=$(mktemp -d)
-
-          get_mime() {
-            case "${1##*.}" in
-              png)      echo "image/png" ;;
-              jpg|jpeg) echo "image/jpeg" ;;
-              webp)     echo "image/webp" ;;
-              gif)      echo "image/gif" ;;
-              *)        echo "application/octet-stream" ;;
-            esac
-          }
-
-          plugin_count=0
-
-          for plugin_dir in plugins/*/; do
-            [[ -d "$plugin_dir" ]] || continue
-            name=$(basename "$plugin_dir")
-            manifest="$plugin_dir/manifest.json"
-
-            if [[ ! -f "$manifest" ]]; then
-              echo "⚠ Skipping $name: missing manifest.json"
-              continue
-            fi
-
-            if ! manifest_json=$(jq '.' "$manifest" 2>/dev/null); then
-              echo "⚠ Skipping $name: invalid manifest JSON"
-              continue
-            fi
-
-            icon=$(jq -r '.icon // empty' <<< "$manifest_json")
-            thumbnail=$(jq -r '.thumbnail // empty' <<< "$manifest_json")
-
-            # Write data URIs to temp files — never pass base64 as shell args
-            icon_tmp=$(mktemp)
-            thumbnail_tmp=$(mktemp)
-
-            if [[ -n "$icon" && -f "$plugin_dir/$icon" ]]; then
-              printf "data:%s;base64,%s" "$(get_mime "$icon")" "$(base64 -w 0 "$plugin_dir/$icon")" > "$icon_tmp"
-            fi
-
-            if [[ -n "$thumbnail" && -f "$plugin_dir/$thumbnail" ]]; then
-              printf "data:%s;base64,%s" "$(get_mime "$thumbnail")" "$(base64 -w 0 "$plugin_dir/$thumbnail")" > "$thumbnail_tmp"
-            fi
-
-            # Build files array — write each entry to its own temp file then slurp
-            files_dir=$(mktemp -d)
-            file_count=0
-
-            while IFS= read -r -d '' file; do
-              rel="${file#"$plugin_dir"}"
-              [[ "$rel" == "manifest.json" ]] && continue
-              [[ -n "$icon" && "$rel" == "$icon" ]] && continue
-              [[ -n "$thumbnail" && "$rel" == "$thumbnail" ]] && continue
-
-              out="public/files/$name/$rel.zst"
-              mkdir -p "$(dirname "$out")"
-              zstd -q -10 -T0 --no-progress "$file" -o "$out"
-
-              jq -nc \
-                --arg path "$rel" \
-                --arg url "/files/$name/$rel.zst" \
-                '{path: $path, url: $url}' \
-                > "$files_dir/$((++file_count)).json"
-
-            done < <(find "$plugin_dir" -type f -print0)
-
-            # Slurp file entries into an array
-            files_array=$(jq -sc '.' "$files_dir"/*.json 2>/dev/null || echo '[]')
-            rm -rf "$files_dir"
-
-            # Write individual plugin JSON
-            jq -n \
-              --argjson manifest "$manifest_json" \
-              --rawfile icon "$icon_tmp" \
-              --rawfile thumbnail "$thumbnail_tmp" \
-              --argjson files "$files_array" \
-              '{manifest: $manifest, icon: $icon, thumbnail: $thumbnail, files: $files}' \
-              > "public/plugins/$name.json"
-
-            # Write index entry to its own file — never accumulate in a shell array
-            jq -n \
-              --argjson manifest "$manifest_json" \
-              --rawfile icon "$icon_tmp" \
-              --rawfile thumbnail "$thumbnail_tmp" \
-              --arg url "/plugins/$name.json" \
-              '{manifest: $manifest, icon: $icon, thumbnail: $thumbnail, url: $url}' \
-              > "$entries_dir/$name.json"
-
-            rm -f "$icon_tmp" "$thumbnail_tmp"
-            echo "✓ $name"
-            ((++plugin_count))
-          done
-
-          # Slurp all index entries into final plugins.json
-          jq -sc '{version: 1, plugins: .}' "$entries_dir"/*.json > public/plugins.json
-          rm -rf "$entries_dir"
-
-          echo "Built $plugin_count plugin(s)"
+      - name: Build plugin registry and site
+        run: python scripts/generate_registry.py
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -154,3 +55,4 @@ jobs:
       - name: Deploy to Pages
         id: deployment
         uses: actions/deploy-pages@v4
+

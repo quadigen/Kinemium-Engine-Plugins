@@ -1,2 +1,5 @@
 # Kinemium-Engine-Extensions
-This repository houses all Kinemium Engine Plugins, you can make a Pull Request with your plugin as a repo.
+This repository houses Kinemium Engine plugins and publishes a searchable GitHub Pages catalog for them.
+
+## Local build
+Run `python scripts/generate_registry.py` to build the static Pages output into `public/`.
