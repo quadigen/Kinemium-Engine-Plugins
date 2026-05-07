@@ -5,3 +5,7 @@
 [submodule "plugins/kinemium-oneko"]
 	path = plugins/kinemium-oneko
 	url = https://github.com/Qquaded/kinemium-oneko
+
+[submodule "plugins/kinemium-discord-rpc"]
+	path = plugins/kinemium-discord-rpc
+	url = https://github.com/Qquaded/kinemium-discord-rpc
