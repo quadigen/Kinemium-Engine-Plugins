@@ -9,3 +9,7 @@
 [submodule "plugins/kinemium-discord-rpc"]
 	path = plugins/kinemium-discord-rpc
 	url = https://github.com/Qquaded/kinemium-discord-rpc
+
+[submodule "plugins/kinemium-kipuka"]
+	path = plugins/kinemium-kipuka
+	url = https://github.com/Qquaded/kinemium-kipuka
