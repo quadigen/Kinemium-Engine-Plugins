@@ -451,6 +451,43 @@ function updatePaginationControls() {
   elements.pageInfo.textContent = `Page ${state.currentPage} of ${totalPages}`;
 }
 
+function createElement(tag, className, textContent) {
+  const element = document.createElement(tag);
+  if (className) {
+    element.className = className;
+  }
+  if (textContent !== undefined && textContent !== null) {
+    element.textContent = textContent;
+  }
+  return element;
+}
+
+function createLabelledRow(tag, className, label, value) {
+  const row = createElement(tag, className);
+  row.append(createElement("span", null, label), createElement("strong", null, value));
+  return row;
+}
+
+function createPluginIcon(plugin, className) {
+  const container = createElement("div", className);
+
+  if (plugin.iconUrl) {
+    const image = createElement("img");
+    image.src = toSiteUrl(plugin.iconUrl);
+    image.alt = `${plugin.displayName} icon`;
+    image.loading = "lazy";
+    container.appendChild(image);
+    return container;
+  }
+
+  container.appendChild(createElement("div", "icon-fallback", initialsFor(plugin.displayName)));
+  return container;
+}
+
+function backgroundUrlValue(imageUrl) {
+  return `url("${toSiteUrl(imageUrl).replace(/"/g, "%22")}")`;
+}
+
 function createCard(plugin) {
   const card = document.createElement("article");
   card.className = "plugin-card";
@@ -482,19 +519,7 @@ function createCard(plugin) {
   const header = document.createElement("div");
   header.className = "plugin-card__header";
 
-  const icon = document.createElement("div");
-  icon.className = "plugin-card__icon";
-  if (plugin.iconUrl) {
-    const iconImg = document.createElement("img");
-    iconImg.src = plugin.iconUrl;
-    iconImg.alt = `${plugin.displayName} icon`;
-    icon.appendChild(iconImg);
-  } else {
-    const fallback = document.createElement("div");
-    fallback.className = "icon-fallback";
-    fallback.textContent = initialsFor(plugin.displayName);
-    icon.appendChild(fallback);
-  }
+  const icon = createPluginIcon(plugin, "plugin-card__icon");
 
   const title = document.createElement("h2");
   title.className = "plugin-card__title";
@@ -546,10 +571,7 @@ function createCard(plugin) {
 }
 
 function createCardBadge(label) {
-  const badge = document.createElement("span");
-  badge.className = "plugin-card__badge";
-  badge.textContent = label;
-  return badge;
+  return createElement("span", "plugin-card__badge", label);
 }
 
 function setCardBackground(target, imageUrl) {
@@ -558,8 +580,7 @@ function setCardBackground(target, imageUrl) {
     return;
   }
 
-  const safeUrl = toSiteUrl(imageUrl).replace(/"/g, "%22");
-  target.style.backgroundImage = `url("${safeUrl}")`;
+  target.style.backgroundImage = backgroundUrlValue(imageUrl);
 }
 
 function setArtworkBackground(target, imageUrl) {
@@ -567,9 +588,8 @@ function setArtworkBackground(target, imageUrl) {
     return;
   }
 
-  const safeUrl = toSiteUrl(imageUrl).replace(/"/g, "%22");
   target.style.backgroundImage =
-    `linear-gradient(180deg, rgba(10, 12, 14, 0.08) 0%, rgba(10, 12, 14, 0.72) 100%), url("${safeUrl}")`;
+    `linear-gradient(180deg, rgba(10, 12, 14, 0.08) 0%, rgba(10, 12, 14, 0.72) 100%), ${backgroundUrlValue(imageUrl)}`;
 }
 
 function formatNumber(value) {
@@ -587,40 +607,7 @@ function formatNumber(value) {
 }
 
 function createBadge(label, variant) {
-  const badge = document.createElement("span");
-  badge.className = `badge badge--${variant}`;
-  badge.textContent = label;
-  return badge;
-}
-
-function createIconBadge(plugin, className) {
-  const badge = document.createElement("div");
-  badge.className = className;
-
-  if (plugin.iconUrl) {
-    const image = document.createElement("img");
-    image.alt = `${plugin.displayName} icon`;
-    image.loading = "lazy";
-    image.src = toSiteUrl(plugin.iconUrl);
-    badge.appendChild(image);
-    return badge;
-  }
-
-  const fallback = document.createElement("div");
-  fallback.className = "icon-fallback";
-  fallback.textContent = initialsFor(plugin.displayName);
-  badge.appendChild(fallback);
-  return badge;
-}
-
-function setArtworkBackground(target, imageUrl) {
-  if (!imageUrl) {
-    return;
-  }
-
-  const safeUrl = toSiteUrl(imageUrl).replace(/"/g, "%22");
-  target.style.backgroundImage =
-    `linear-gradient(180deg, rgba(10, 12, 14, 0.08) 0%, rgba(10, 12, 14, 0.72) 100%), url("${safeUrl}")`;
+  return createElement("span", `badge badge--${variant}`, label);
 }
 
 function initialsFor(value) {
@@ -833,10 +820,6 @@ function renderDetail(summary, detail) {
     createMetaItem("Archive", formatBytes(detail.download?.size || 0))
   );
 
-  const linksSection = document.createElement("section");
-  linksSection.className = "detail-section";
-  const linksHeading = document.createElement("h3");
-  linksHeading.textContent = "Links";
   const linksList = document.createElement("div");
   linksList.className = "detail-list";
   linksList.append(
@@ -844,12 +827,8 @@ function renderDetail(summary, detail) {
     createLinkRow("Download URL", detail.download?.url || "Unavailable"),
     createLinkRow("Archive SHA-256", detail.download?.sha256 || "Unavailable")
   );
-  linksSection.append(linksHeading, linksList);
+  const linksSection = createDetailSection("Links", linksList);
 
-  const tagsSection = document.createElement("section");
-  tagsSection.className = "detail-section";
-  const tagsHeading = document.createElement("h3");
-  tagsHeading.textContent = "Tags";
   const tags = document.createElement("div");
   tags.className = "tag-row";
   tags.append(
@@ -860,17 +839,13 @@ function renderDetail(summary, detail) {
       .filter(Boolean)
       .map((entry) => createTag(entry))
   );
-  tagsSection.append(
-    tagsHeading,
+  const tagsSection = createDetailSection(
+    "Tags",
     tags.childElementCount ? tags : createMessageBlock("", "This plugin has no tags yet.")
   );
 
-  const dependencySection = document.createElement("section");
-  dependencySection.className = "detail-section";
-  const dependencyHeading = document.createElement("h3");
-  dependencyHeading.textContent = "Dependencies";
-  dependencySection.append(
-    dependencyHeading,
+  const dependencySection = createDetailSection(
+    "Dependencies",
     dependencies.length
       ? createTokenList(
           "dependency-list",
@@ -879,12 +854,8 @@ function renderDetail(summary, detail) {
       : createMessageBlock("", "This plugin does not declare any dependencies.")
   );
 
-  const permissionSection = document.createElement("section");
-  permissionSection.className = "detail-section";
-  const permissionHeading = document.createElement("h3");
-  permissionHeading.textContent = "Permissions";
-  permissionSection.append(
-    permissionHeading,
+  const permissionSection = createDetailSection(
+    "Permissions",
     permissions.length
       ? createTokenList(
           "permission-list",
@@ -895,25 +866,17 @@ function renderDetail(summary, detail) {
       : createMessageBlock("", "This plugin does not request any special permissions.")
   );
 
-  const fileSection = document.createElement("section");
-  fileSection.className = "detail-section";
-  const fileHeading = document.createElement("h3");
-  fileHeading.textContent = `Files (${detail.files?.length || 0})`;
   const fileList = document.createElement("div");
   fileList.className = "file-list";
   (detail.files || []).forEach((file) => {
     fileList.appendChild(createFileRow(file));
   });
-  fileSection.append(fileHeading, fileList);
+  const fileSection = createDetailSection(`Files (${detail.files?.length || 0})`, fileList);
 
-  const readmeSection = document.createElement("section");
-  readmeSection.className = "detail-section";
-  const readmeHeading = document.createElement("h3");
-  readmeHeading.textContent = "README";
   const readmeBlock = document.createElement("pre");
   readmeBlock.className = "readme-block";
   readmeBlock.textContent = detail.readme || "No README.md was found for this plugin.";
-  readmeSection.append(readmeHeading, readmeBlock);
+  const readmeSection = createDetailSection("README", readmeBlock);
 
   content.append(
     hero,
@@ -937,7 +900,7 @@ function createDetailPreview(summary, detail) {
   thumb.className = "detail-preview__thumb";
   setArtworkBackground(thumb, detail.assets?.thumbnailUrl || detail.assets?.iconUrl || summary.artworkUrl);
 
-  const icon = createIconBadge(
+  const icon = createPluginIcon(
     {
       displayName: summary.displayName,
       iconUrl: detail.assets?.iconUrl || summary.iconUrl,
@@ -950,10 +913,7 @@ function createDetailPreview(summary, detail) {
 }
 
 function createTag(label) {
-  const tag = document.createElement("span");
-  tag.className = "tag";
-  tag.textContent = label;
-  return tag;
+  return createElement("span", "tag", label);
 }
 
 function createLinkButton(label, url, className, downloadName = "") {
@@ -1004,66 +964,43 @@ function toExternalUrl(value) {
 }
 
 function createMetaItem(label, value) {
-  const item = document.createElement("article");
-  item.className = "meta-item";
-
-  const title = document.createElement("span");
-  title.textContent = label;
-
-  const body = document.createElement("strong");
-  body.textContent = value;
-
-  item.append(title, body);
-  return item;
+  return createLabelledRow("article", "meta-item", label, value);
 }
 
 function createLinkRow(label, value) {
-  const row = document.createElement("div");
-  row.className = "detail-list__row";
+  return createLabelledRow("div", "detail-list__row", label, value);
+}
 
-  const title = document.createElement("span");
-  title.textContent = label;
-
-  const body = document.createElement("strong");
-  body.textContent = value;
-
-  row.append(title, body);
-  return row;
+function createDetailSection(title, ...children) {
+  const section = createElement("section", "detail-section");
+  section.append(createElement("h3", null, title), ...children);
+  return section;
 }
 
 function createTokenList(className, entries) {
-  const list = document.createElement("div");
-  list.className = className;
+  const list = createElement("div", className);
   list.append(...entries.map((entry) => createTag(entry)));
   return list;
 }
 
 function createFileRow(file) {
-  const row = document.createElement("article");
-  row.className = "file-row";
-
-  const name = document.createElement("strong");
-  name.textContent = file.path;
-
-  const meta = document.createElement("div");
-  meta.className = "file-meta";
-  meta.textContent = `${file.contentType || "Unknown type"} | ${formatBytes(file.size || 0)}`;
-
+  const row = createElement("article", "file-row");
+  const name = createElement("strong", null, file.path);
+  const meta = createElement(
+    "div",
+    "file-meta",
+    `${file.contentType || "Unknown type"} | ${formatBytes(file.size || 0)}`
+  );
   row.append(name, meta);
   return row;
 }
 
 function createMessageBlock(title, description) {
-  const block = document.createElement("div");
-  block.className = "message-block";
+  const block = createElement("div", "message-block");
   if (title) {
-    const strong = document.createElement("strong");
-    strong.textContent = title;
-    block.appendChild(strong);
+    block.appendChild(createElement("strong", null, title));
   }
-  const text = document.createElement("p");
-  text.textContent = description;
-  block.appendChild(text);
+  block.appendChild(createElement("p", null, description));
   return block;
 }
 

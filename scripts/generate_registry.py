@@ -51,16 +51,16 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def to_iso(moment: datetime) -> str:
+    return moment.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
-        "+00:00", "Z"
-    )
+    return to_iso(datetime.now(timezone.utc))
 
 
 def iso_from_timestamp(timestamp: float) -> str:
-    return datetime.fromtimestamp(timestamp, timezone.utc).replace(
-        microsecond=0
-    ).isoformat().replace("+00:00", "Z")
+    return to_iso(datetime.fromtimestamp(timestamp, timezone.utc))
 
 
 def safe_read_text(path: Path) -> str:
@@ -191,6 +191,10 @@ def build_plugin_payload(
     thumbnail_url = copy_asset(plugin_dir, output_dir, slug, manifest.get("thumbnail"))
     download = build_archive(output_dir, slug, files)
     updated_at = plugin_updated_at(files)
+    assets = {
+        "iconUrl": icon_url,
+        "thumbnailUrl": thumbnail_url,
+    }
 
     detail_payload = {
         "version": 1,
@@ -199,10 +203,7 @@ def build_plugin_payload(
         "sourceDir": f"plugins/{slug}",
         "updatedAt": updated_at,
         "manifest": manifest,
-        "assets": {
-            "iconUrl": icon_url,
-            "thumbnailUrl": thumbnail_url,
-        },
+        "assets": assets,
         "readme": readme,
         "download": download,
         "files": [
@@ -221,10 +222,7 @@ def build_plugin_payload(
         "generatedAt": generated_at,
         "updatedAt": updated_at,
         "manifest": manifest,
-        "assets": {
-            "iconUrl": icon_url,
-            "thumbnailUrl": thumbnail_url,
-        },
+        "assets": assets,
         "download": download,
         "detailsUrl": relative_url("plugins", f"{slug}.json"),
         "fileCount": len(files),
