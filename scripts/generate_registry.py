@@ -114,8 +114,25 @@ def sha256_for_file(path: Path) -> str:
     return hasher.hexdigest()
 
 
+def is_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve(strict=True).relative_to(root.resolve())
+    except (OSError, ValueError):
+        return False
+    return True
+
+
 def iter_plugin_files(plugin_dir: Path) -> Iterable[PluginFile]:
+    root = plugin_dir.resolve()
     for path in sorted(plugin_dir.rglob("*")):
+        # Reject symlinks and any path whose real location escapes the plugin
+        # directory. Plugins are untrusted community submodules, so a crafted
+        # symlink could otherwise leak files from the build host into the
+        # published archive and registry.
+        if path.is_symlink() or not is_within(path, root):
+            print(f"Skipping {path}: symlink or outside plugin directory")
+            continue
+
         if not path.is_file():
             continue
 
