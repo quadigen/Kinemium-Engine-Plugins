@@ -44,10 +44,36 @@ const elements = {
 };
 
 document.addEventListener("DOMContentLoaded", () => {
+  const missing = Object.entries(elements)
+    .filter(([, element]) => !element)
+    .map(([name]) => name);
+
+  if (missing.length) {
+    reportFatalError(
+      new Error(`Missing required page elements: ${missing.join(", ")}`)
+    );
+    return;
+  }
+
   initializeTheme();
   wireEvents();
   loadRegistry();
 });
+
+function reportFatalError(error) {
+  console.error(error);
+
+  const errorState = elements.errorState || document.querySelector("#error-state");
+  if (!errorState) {
+    return;
+  }
+
+  errorState.hidden = false;
+  const description = errorState.querySelector("p");
+  if (description) {
+    description.textContent = `The catalog failed to start: ${error.message}`;
+  }
+}
 
 function wireEvents() {
   elements.searchInput.addEventListener("input", applySearch);
@@ -92,6 +118,7 @@ function initializeTheme() {
       savedTheme = value;
     }
   } catch (error) {
+    console.warn("Could not read the stored theme preference.", error);
     savedTheme = "dark";
   }
 
@@ -115,7 +142,7 @@ function toggleTheme() {
   try {
     window.localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
   } catch (error) {
-    return;
+    console.warn("Could not persist the theme preference.", error);
   }
 }
 
@@ -129,18 +156,33 @@ async function loadRegistry() {
         elements.generatedAt.textContent = "Unavailable";
         elements.pluginGrid.replaceChildren();
         elements.emptyState.hidden = false;
-        elements.emptyState.querySelector("h2").textContent = "No plugins available";
-        elements.emptyState.querySelector("p").textContent = "The plugin registry has not been generated yet. Run the artifact generation workflow to create plugins.";
+        setEmptyStateText(
+          "No plugins available",
+          "The plugin registry has not been generated yet. Run the artifact generation workflow to create plugins."
+        );
         return;
       }
-      throw new Error(`Failed to load plugins.json: ${response.status}`);
+      throw new Error(
+        `Failed to load plugins.json: ${response.status} ${response.statusText}`.trim()
+      );
     }
 
-    const registry = await response.json();
-    const plugins = Array.isArray(registry.plugins) ? registry.plugins : [];
+    const registry = await parseJsonResponse(response, "plugins.json");
+    if (!registry || typeof registry !== "object") {
+      throw new Error("plugins.json did not contain a registry object.");
+    }
+    if (!Array.isArray(registry.plugins)) {
+      throw new Error("plugins.json is missing the \"plugins\" array.");
+    }
+    const plugins = registry.plugins;
 
     state.registry = registry;
-    state.plugins = plugins.map(normalizePlugin);
+    state.plugins = plugins.filter(isUsablePluginEntry).map(normalizePlugin);
+
+    const skippedCount = plugins.length - state.plugins.length;
+    if (skippedCount > 0) {
+      console.warn(`Ignored ${skippedCount} malformed plugin entries in plugins.json.`);
+    }
 
     populateFilters();
 
@@ -152,13 +194,49 @@ async function loadRegistry() {
   } catch (error) {
     console.error(error);
     elements.errorState.hidden = false;
-    elements.resultsStatus.textContent = "Registry load failed.";
+    const description = elements.errorState.querySelector("p");
+    if (description) {
+      description.textContent = `${error.message} Check that the workflow published plugins.json and the plugin detail files.`;
+    }
+    elements.resultsStatus.textContent = `Registry load failed: ${error.message}`;
     elements.generatedAt.textContent = "Unavailable";
   }
 }
 
+function setEmptyStateText(title, description) {
+  const heading = elements.emptyState.querySelector("h2");
+  const text = elements.emptyState.querySelector("p");
+  if (heading) {
+    heading.textContent = title;
+  }
+  if (text) {
+    text.textContent = description;
+  }
+}
+
+function isUsablePluginEntry(plugin) {
+  if (!plugin || typeof plugin !== "object") {
+    console.warn("Ignoring plugin entry that is not an object.", plugin);
+    return false;
+  }
+  if (typeof plugin.slug !== "string" || !plugin.slug) {
+    console.warn("Ignoring plugin entry without a slug.", plugin);
+    return false;
+  }
+  return true;
+}
+
+async function parseJsonResponse(response, label) {
+  try {
+    return await response.json();
+  } catch (error) {
+    throw new Error(`${label} is not valid JSON: ${error.message}`);
+  }
+}
+
 function normalizePlugin(plugin) {
-  const manifest = plugin.manifest || {};
+  const manifest =
+    plugin.manifest && typeof plugin.manifest === "object" ? plugin.manifest : {};
   const keywords = Array.isArray(manifest.keywords) ? manifest.keywords : [];
   const category = inferCategory(manifest, keywords);
   const supportLevel = inferSupportLevel(manifest);
@@ -418,7 +496,14 @@ function renderGrid() {
 }
 
 function handleLimitChange() {
-  state.itemsPerPage = parseInt(elements.limitFilter.value, 10);
+  const parsedLimit = Number.parseInt(elements.limitFilter.value, 10);
+  if (!Number.isFinite(parsedLimit) || parsedLimit <= 0) {
+    console.warn(`Ignoring invalid items-per-page value: ${elements.limitFilter.value}`);
+    elements.limitFilter.value = String(state.itemsPerPage);
+    return;
+  }
+
+  state.itemsPerPage = parsedLimit;
   state.currentPage = 1;
   renderGrid();
   updateStatus(elements.searchInput.value.trim());
@@ -473,6 +558,10 @@ function createCard(plugin) {
     img.src = plugin.thumbnailUrl;
     img.alt = `${plugin.displayName} thumbnail`;
     img.loading = "lazy";
+    img.addEventListener("error", () => {
+      console.warn(`Thumbnail failed to load for "${plugin.slug}": ${plugin.thumbnailUrl}`);
+      img.remove();
+    });
     thumb.appendChild(img);
   }
 
@@ -488,12 +577,13 @@ function createCard(plugin) {
     const iconImg = document.createElement("img");
     iconImg.src = plugin.iconUrl;
     iconImg.alt = `${plugin.displayName} icon`;
+    iconImg.addEventListener("error", () => {
+      console.warn(`Icon failed to load for "${plugin.slug}": ${plugin.iconUrl}`);
+      icon.replaceChildren(createIconFallback(plugin.displayName));
+    });
     icon.appendChild(iconImg);
   } else {
-    const fallback = document.createElement("div");
-    fallback.className = "icon-fallback";
-    fallback.textContent = initialsFor(plugin.displayName);
-    icon.appendChild(fallback);
+    icon.appendChild(createIconFallback(plugin.displayName));
   }
 
   const title = document.createElement("h2");
@@ -602,15 +692,23 @@ function createIconBadge(plugin, className) {
     image.alt = `${plugin.displayName} icon`;
     image.loading = "lazy";
     image.src = toSiteUrl(plugin.iconUrl);
+    image.addEventListener("error", () => {
+      console.warn(`Icon failed to load: ${plugin.iconUrl}`);
+      badge.replaceChildren(createIconFallback(plugin.displayName));
+    });
     badge.appendChild(image);
     return badge;
   }
 
+  badge.appendChild(createIconFallback(plugin.displayName));
+  return badge;
+}
+
+function createIconFallback(displayName) {
   const fallback = document.createElement("div");
   fallback.className = "icon-fallback";
-  fallback.textContent = initialsFor(plugin.displayName);
-  badge.appendChild(fallback);
-  return badge;
+  fallback.textContent = initialsFor(displayName);
+  return fallback;
 }
 
 function setArtworkBackground(target, imageUrl) {
@@ -713,15 +811,22 @@ function handleHashChange() {
   }
 
   const pluginExists = state.plugins.some((plugin) => plugin.slug === slug);
-  if (pluginExists) {
-    openDetails(slug, { updateHash: false });
+  if (!pluginExists) {
+    if (state.registry) {
+      elements.resultsStatus.textContent = `No plugin named "${slug}" is published in this registry.`;
+    }
+    return;
   }
+
+  openDetails(slug, { updateHash: false });
 }
 
 async function openDetails(slug, options = {}) {
   const { updateHash = true } = options;
   const summary = state.plugins.find((plugin) => plugin.slug === slug);
   if (!summary) {
+    console.warn(`Cannot open details for unknown plugin "${slug}".`);
+    elements.resultsStatus.textContent = `No plugin named "${slug}" is published in this registry.`;
     return;
   }
 
@@ -745,10 +850,7 @@ async function openDetails(slug, options = {}) {
   } catch (error) {
     console.error(error);
     elements.detailContent.replaceChildren(
-      createMessageBlock(
-        "Plugin details could not be loaded.",
-        "The detail JSON for this plugin was not available."
-      )
+      createMessageBlock("Plugin details could not be loaded.", error.message)
     );
   } finally {
     elements.detailLoading.hidden = true;
@@ -761,12 +863,22 @@ async function fetchDetail(summary) {
     return cached;
   }
 
-  const response = await fetch(summary.detailsUrl, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Failed to load ${summary.detailsUrl}: ${response.status}`);
+  if (!summary.detailsUrl) {
+    throw new Error(`Plugin "${summary.slug}" has no details URL in plugins.json.`);
   }
 
-  const detail = await response.json();
+  const response = await fetch(summary.detailsUrl, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(
+      `Failed to load ${summary.detailsUrl}: ${response.status} ${response.statusText}`.trim()
+    );
+  }
+
+  const detail = await parseJsonResponse(response, summary.detailsUrl);
+  if (!detail || typeof detail !== "object") {
+    throw new Error(`${summary.detailsUrl} did not contain a plugin detail object.`);
+  }
+
   state.detailCache.set(summary.slug, detail);
   return detail;
 }

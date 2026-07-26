@@ -5,6 +5,7 @@ import hashlib
 import json
 import mimetypes
 import shutil
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,6 +16,14 @@ import zipfile
 
 IGNORED_PARTS = {".git"}
 TEXT_ENCODING = "utf-8"
+
+
+class RegistryBuildError(RuntimeError):
+    """Raised when the registry cannot be built from the given inputs."""
+
+
+def warn(message: str) -> None:
+    print(f"warning: {message}", file=sys.stderr)
 
 
 @dataclass
@@ -48,6 +57,14 @@ def parse_args() -> argparse.Namespace:
         default=Path("public"),
         help="Directory where the built site should be written.",
     )
+    parser.add_argument(
+        "--ignore-plugin-errors",
+        action="store_true",
+        help=(
+            "Report broken plugins as warnings and still exit successfully "
+            "instead of failing the build."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -65,6 +82,24 @@ def iso_from_timestamp(timestamp: float) -> str:
 
 def safe_read_text(path: Path) -> str:
     return path.read_text(encoding=TEXT_ENCODING, errors="replace")
+
+
+def read_manifest(path: Path) -> dict:
+    try:
+        raw = path.read_text(encoding=TEXT_ENCODING)
+    except (OSError, UnicodeDecodeError) as exc:
+        raise RegistryBuildError(f"manifest.json could not be read: {exc}") from exc
+
+    try:
+        manifest = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RegistryBuildError(f"invalid manifest.json: {exc}") from exc
+
+    if not isinstance(manifest, dict):
+        raise RegistryBuildError(
+            f"manifest.json must contain a JSON object, got {type(manifest).__name__}"
+        )
+    return manifest
 
 
 def write_json(path: Path, payload: dict) -> None:
@@ -92,11 +127,30 @@ def resolve_within(root: Path, relative_path: str | None) -> Path | None:
 
 
 def copy_asset(
-    plugin_dir: Path, output_dir: Path, slug: str, relative_path: str | None
+    plugin_dir: Path,
+    output_dir: Path,
+    slug: str,
+    relative_path: object,
+    asset_kind: str,
 ) -> str | None:
-    source_path = resolve_within(plugin_dir, relative_path)
-    if source_path is None or not source_path.is_file():
+    if relative_path is None:
         return None
+
+    if not isinstance(relative_path, str) or not relative_path.strip():
+        raise RegistryBuildError(
+            f"manifest {asset_kind} must be a non-empty relative path, "
+            f"got {relative_path!r}"
+        )
+
+    source_path = resolve_within(plugin_dir, relative_path)
+    if source_path is None:
+        raise RegistryBuildError(
+            f"manifest {asset_kind} path escapes the plugin directory: {relative_path!r}"
+        )
+    if not source_path.is_file():
+        raise RegistryBuildError(
+            f"manifest {asset_kind} file does not exist: {relative_path!r}"
+        )
 
     relative = source_path.relative_to(plugin_dir.resolve())
     destination = output_dir / "assets" / "plugins" / slug / relative
@@ -167,28 +221,28 @@ def plugin_updated_at(files: list[PluginFile]) -> str:
 def build_plugin_payload(
     plugin_dir: Path, output_dir: Path, generated_at: str
 ) -> tuple[dict, dict] | None:
-    manifest_path = plugin_dir / "manifest.json"
-    if not manifest_path.is_file():
-        print(f"Skipping {plugin_dir.name}: missing manifest.json")
-        return None
-
-    try:
-        manifest = json.loads(safe_read_text(manifest_path))
-    except json.JSONDecodeError as exc:
-        print(f"Skipping {plugin_dir.name}: invalid manifest.json ({exc})")
-        return None
-
     slug = plugin_dir.name
     files = list(iter_plugin_files(plugin_dir))
     if not files:
-        print(f"Skipping {plugin_dir.name}: no files to publish")
+        raise RegistryBuildError(
+            "plugin directory contains no publishable files "
+            "(an uninitialized submodule?)"
+        )
+
+    manifest_path = plugin_dir / "manifest.json"
+    if not manifest_path.is_file():
+        warn(f"Skipping {slug}: missing manifest.json")
         return None
+
+    manifest = read_manifest(manifest_path)
 
     readme_path = plugin_dir / "README.md"
     readme = safe_read_text(readme_path) if readme_path.is_file() else ""
 
-    icon_url = copy_asset(plugin_dir, output_dir, slug, manifest.get("icon"))
-    thumbnail_url = copy_asset(plugin_dir, output_dir, slug, manifest.get("thumbnail"))
+    icon_url = copy_asset(plugin_dir, output_dir, slug, manifest.get("icon"), "icon")
+    thumbnail_url = copy_asset(
+        plugin_dir, output_dir, slug, manifest.get("thumbnail"), "thumbnail"
+    )
     download = build_archive(output_dir, slug, files)
     updated_at = plugin_updated_at(files)
 
@@ -233,11 +287,16 @@ def build_plugin_payload(
     return summary_payload, detail_payload
 
 
-def build_registry(plugins_dir: Path, site_dir: Path, output_dir: Path) -> None:
+def build_registry(
+    plugins_dir: Path,
+    site_dir: Path,
+    output_dir: Path,
+    ignore_plugin_errors: bool = False,
+) -> None:
     if not plugins_dir.is_dir():
-        raise FileNotFoundError(f"Plugins directory not found: {plugins_dir}")
+        raise RegistryBuildError(f"Plugins directory not found: {plugins_dir}")
     if not site_dir.is_dir():
-        raise FileNotFoundError(f"Site directory not found: {site_dir}")
+        raise RegistryBuildError(f"Site directory not found: {site_dir}")
 
     if output_dir.exists():
         shutil.rmtree(output_dir)
@@ -247,9 +306,16 @@ def build_registry(plugins_dir: Path, site_dir: Path, output_dir: Path) -> None:
 
     generated_at = now_iso()
     summaries: list[dict] = []
+    failures: list[str] = []
 
     for plugin_dir in sorted(path for path in plugins_dir.iterdir() if path.is_dir()):
-        payloads = build_plugin_payload(plugin_dir, output_dir, generated_at)
+        try:
+            payloads = build_plugin_payload(plugin_dir, output_dir, generated_at)
+        except (RegistryBuildError, OSError, zipfile.BadZipFile) as exc:
+            failures.append(f"{plugin_dir.name}: {exc}")
+            warn(f"Failed to build {plugin_dir.name}: {exc}")
+            continue
+
         if payloads is None:
             continue
 
@@ -277,15 +343,28 @@ def build_registry(plugins_dir: Path, site_dir: Path, output_dir: Path) -> None:
 
     print(f"Built {len(summaries)} plugin(s)")
 
+    if failures:
+        details = "\n".join(f"  - {failure}" for failure in failures)
+        if ignore_plugin_errors:
+            warn(f"{len(failures)} plugin(s) failed to build:\n{details}")
+            return
+        raise RegistryBuildError(f"{len(failures)} plugin(s) failed to build:\n{details}")
 
-def main() -> None:
+
+def main() -> int:
     args = parse_args()
-    build_registry(
-        plugins_dir=args.plugins_dir,
-        site_dir=args.site_dir,
-        output_dir=args.output_dir,
-    )
+    try:
+        build_registry(
+            plugins_dir=args.plugins_dir,
+            site_dir=args.site_dir,
+            output_dir=args.output_dir,
+            ignore_plugin_errors=args.ignore_plugin_errors,
+        )
+    except RegistryBuildError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
