@@ -1,3 +1,5 @@
 public/
 __pycache__/
-
+.venv/
+.pytest_cache/
+.coverage
