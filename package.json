@@ -1,0 +1,10 @@
+{
+  "name": "kinemium-plugin-registry",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "build": "python3 scripts/generate_registry.py",
+    "dev": "python3 scripts/generate_registry.py && python3 -m http.server 3000 --directory public",
+    "start": "python3 -m http.server 3000 --directory public"
+  }
+}
